@@ -43,6 +43,7 @@ fun MapScreen(
 
     var showStats by remember { mutableStateOf(true) }
     var useDarkMap by remember { mutableStateOf(true) }
+    var showActivityFeed by remember { mutableStateOf(false) }
 
     // Location permission
     val locationPermissions = rememberMultiplePermissionsState(
@@ -281,12 +282,13 @@ fun MapScreen(
             }
         }
 
-        // Activity feed (bottom-left)
+        // Activity feed (bottom-left) - collapsible
         if (recentRxPackets.isNotEmpty()) {
             Card(
                 modifier = Modifier
                     .padding(12.dp)
-                    .align(Alignment.BottomStart),
+                    .align(Alignment.BottomStart)
+                    .clickable { showActivityFeed = !showActivityFeed },
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
                 )
@@ -294,27 +296,44 @@ fun MapScreen(
                 Column(
                     modifier = Modifier.padding(8.dp)
                 ) {
-                    recentRxPackets.take(3).forEach { packet ->
-                        Row(
-                            modifier = Modifier.padding(vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Surface(
-                                modifier = Modifier.size(6.dp),
-                                shape = MaterialTheme.shapes.small,
-                                color = rssiColor(packet.rssi)
-                            ) {}
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = packet.path.joinToString("→"),
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "${packet.rssi}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (showActivityFeed) "▼" else "▶",
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "RX (${recentRxPackets.size})",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    if (showActivityFeed) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        recentRxPackets.take(3).forEach { packet ->
+                            Row(
+                                modifier = Modifier.padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    modifier = Modifier.size(6.dp),
+                                    shape = MaterialTheme.shapes.small,
+                                    color = rssiColor(packet.rssi)
+                                ) {}
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = packet.path.joinToString("→"),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "${packet.rssi}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
