@@ -1,6 +1,7 @@
 package sh.mapme.mapper.ui.map
 
 import android.Manifest
+import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -8,15 +9,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
-import com.google.android.gms.maps.CameraUpdateFactory
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.*
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Polygon
+import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import sh.mapme.mapper.MainViewModel
 import sh.mapme.mapper.MapmeApp
 
@@ -25,6 +30,7 @@ import sh.mapme.mapper.MapmeApp
 fun MapScreen(
     viewModel: MainViewModel = viewModel()
 ) {
+    val context = LocalContext.current
     val currentLocation by viewModel.currentLocation.collectAsState()
     val visitedHexes by viewModel.visitedHexes.collectAsState()
     val serverHexes by viewModel.serverHexes.collectAsState()
@@ -45,6 +51,9 @@ fun MapScreen(
     )
 
     LaunchedEffect(Unit) {
+        // Configure osmdroid
+        Configuration.getInstance().userAgentValue = context.packageName
+
         if (!locationPermissions.allPermissionsGranted) {
             locationPermissions.launchMultiplePermissionRequest()
         }
@@ -58,21 +67,7 @@ fun MapScreen(
     }
 
     // Default to Hamburg if no location
-    val defaultLocation = LatLng(53.5511, 9.9937)
-    val currentLatLng = currentLocation?.let { LatLng(it.latitude, it.longitude) } ?: defaultLocation
-
-    val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(currentLatLng, 14f)
-    }
-
-    // Update camera when location changes
-    LaunchedEffect(currentLocation) {
-        currentLocation?.let {
-            cameraPositionState.animate(
-                CameraUpdateFactory.newLatLng(LatLng(it.latitude, it.longitude))
-            )
-        }
-    }
+    val defaultLocation = GeoPoint(53.5511, 9.9937)
 
     // Session hex data for tracking strongest signal
     val sessionHexData = remember { mutableStateMapOf<String, Pair<String, Int>>() }
@@ -90,62 +85,109 @@ fun MapScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Google Map
-        GoogleMap(
-            modifier = Modifier.fillMaxSize(),
-            cameraPositionState = cameraPositionState,
-            properties = MapProperties(
-                mapType = if (useDarkMap) MapType.HYBRID else MapType.NORMAL,
-                isMyLocationEnabled = locationPermissions.allPermissionsGranted
-            ),
-            uiSettings = MapUiSettings(
-                zoomControlsEnabled = false,
-                myLocationButtonEnabled = true,
-                compassEnabled = true
+    // Remember the map view
+    val mapView = remember {
+        MapView(context).apply {
+            setTileSource(TileSourceFactory.MAPNIK)
+            setMultiTouchControls(true)
+            controller.setZoom(14.0)
+            controller.setCenter(defaultLocation)
+
+            // Add location overlay
+            val locationOverlay = MyLocationNewOverlay(this)
+            locationOverlay.enableMyLocation()
+            overlays.add(locationOverlay)
+        }
+    }
+
+    // Update map when dark mode changes
+    LaunchedEffect(useDarkMap) {
+        if (useDarkMap) {
+            mapView.setTileSource(TileSourceFactory.MAPNIK)
+            mapView.overlayManager.tilesOverlay.setColorFilter(
+                android.graphics.ColorMatrixColorFilter(
+                    floatArrayOf(
+                        -1f, 0f, 0f, 0f, 255f,
+                        0f, -1f, 0f, 0f, 255f,
+                        0f, 0f, -1f, 0f, 255f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
             )
-        ) {
-            // Server hexes (from API)
-            serverHexes.forEach { hex ->
-                val boundary = MapmeApp.instance.locationService.getH3Boundary(hex.h)
-                boundary?.let { coords ->
-                    val latLngs = coords.map { LatLng(it.first, it.second) }
-                    Polygon(
-                        points = latLngs,
-                        fillColor = Color(hex.color.r, hex.color.g, hex.color.b, 0.5f),
-                        strokeColor = Color(hex.color.r, hex.color.g, hex.color.b, 1f),
-                        strokeWidth = 2f
-                    )
-                }
-            }
+        } else {
+            mapView.setTileSource(TileSourceFactory.MAPNIK)
+            mapView.overlayManager.tilesOverlay.setColorFilter(null)
+        }
+        mapView.invalidate()
+    }
 
-            // Session hexes (visited this session)
-            visitedHexes.forEach { hexId ->
-                val boundary = MapmeApp.instance.locationService.getH3Boundary(hexId)
-                boundary?.let { coords ->
-                    val latLngs = coords.map { LatLng(it.first, it.second) }
-                    val hasSignal = sessionHexData.containsKey(hexId)
-                    Polygon(
-                        points = latLngs,
-                        fillColor = if (hasSignal) Color(0f, 1f, 0f, 0.3f) else Color(0f, 0f, 1f, 0.2f),
-                        strokeColor = if (hasSignal) Color.Green else Color.Blue,
-                        strokeWidth = 3f
-                    )
+    // Update camera when location changes
+    LaunchedEffect(currentLocation) {
+        currentLocation?.let {
+            mapView.controller.animateTo(GeoPoint(it.latitude, it.longitude))
+        }
+    }
 
-                    // Show strongest ID in hex
-                    sessionHexData[hexId]?.let { (nodeId, _) ->
-                        val center = MapmeApp.instance.locationService.getH3Center(hexId)
-                        center?.let { (lat, lng) ->
-                            Marker(
-                                state = MarkerState(position = LatLng(lat, lng)),
-                                title = nodeId,
-                                snippet = "Strongest signal"
-                            )
-                        }
-                    }
+    // Update hex overlays
+    LaunchedEffect(serverHexes, visitedHexes, sessionHexData.keys.toList()) {
+        // Remove old polygon overlays (keep location overlay)
+        mapView.overlays.removeAll { it is Polygon }
+
+        // Server hexes (from API)
+        serverHexes.forEach { hex ->
+            val boundary = MapmeApp.instance.locationService.getH3Boundary(hex.h)
+            boundary?.let { coords ->
+                val polygon = Polygon().apply {
+                    points = coords.map { GeoPoint(it.first, it.second) }
+                    fillPaint.color = AndroidColor.argb(
+                        128,
+                        hex.color.r.toInt(),
+                        hex.color.g.toInt(),
+                        hex.color.b.toInt()
+                    )
+                    outlinePaint.color = AndroidColor.rgb(
+                        hex.color.r.toInt(),
+                        hex.color.g.toInt(),
+                        hex.color.b.toInt()
+                    )
+                    outlinePaint.strokeWidth = 2f
                 }
+                mapView.overlays.add(polygon)
             }
         }
+
+        // Session hexes (visited this session)
+        visitedHexes.forEach { hexId ->
+            val boundary = MapmeApp.instance.locationService.getH3Boundary(hexId)
+            boundary?.let { coords ->
+                val hasSignal = sessionHexData.containsKey(hexId)
+                val polygon = Polygon().apply {
+                    points = coords.map { GeoPoint(it.first, it.second) }
+                    fillPaint.color = if (hasSignal) {
+                        AndroidColor.argb(77, 0, 255, 0) // Green with alpha
+                    } else {
+                        AndroidColor.argb(51, 0, 0, 255) // Blue with alpha
+                    }
+                    outlinePaint.color = if (hasSignal) {
+                        AndroidColor.GREEN
+                    } else {
+                        AndroidColor.BLUE
+                    }
+                    outlinePaint.strokeWidth = 3f
+                }
+                mapView.overlays.add(polygon)
+            }
+        }
+
+        mapView.invalidate()
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        // OpenStreetMap
+        AndroidView(
+            factory = { mapView },
+            modifier = Modifier.fillMaxSize()
+        )
 
         // Stats overlay (top-left)
         if (showStats) {
@@ -285,6 +327,13 @@ fun MapScreen(
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
             }
+        }
+    }
+
+    // Cleanup
+    DisposableEffect(Unit) {
+        onDispose {
+            mapView.onDetach()
         }
     }
 }

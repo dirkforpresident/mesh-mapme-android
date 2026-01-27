@@ -1,7 +1,6 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("com.google.android.libraries.mapsplatform.secrets-gradle-plugin")
 }
 
 android {
@@ -66,9 +65,10 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.navigation:navigation-compose:2.7.6")
 
-    // Google Maps for Compose
-    implementation("com.google.maps.android:maps-compose:4.3.0")
-    implementation("com.google.android.gms:play-services-maps:18.2.0")
+    // OpenStreetMap (osmdroid) - free, no API key needed
+    implementation("org.osmdroid:osmdroid-android:6.1.18")
+
+    // Location services
     implementation("com.google.android.gms:play-services-location:21.1.0")
 
     // H3 Hexagonal Indexing (Uber)
