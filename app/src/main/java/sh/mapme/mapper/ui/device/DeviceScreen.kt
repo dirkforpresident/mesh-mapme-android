@@ -397,25 +397,11 @@ fun ConnectedScreen(viewModel: MainViewModel) {
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Privacy Mode",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold
-                        )
-
-                        TextButton(
-                            onClick = {
-                                if (isTracking) viewModel.stopTracking() else viewModel.startTracking()
-                            }
-                        ) {
-                            Text(if (isTracking) "Pause GPS" else "Start GPS")
-                        }
-                    }
+                    Text(
+                        text = "Privacy Mode",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
 
                     Spacer(modifier = Modifier.height(8.dp))
 
