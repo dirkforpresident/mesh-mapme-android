@@ -9,6 +9,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -28,11 +29,16 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainApp() {
     val navController = rememberNavController()
     var selectedTab by remember { mutableIntStateOf(0) }
+
+    // Shared ViewModel
+    val viewModel: MainViewModel = viewModel()
+
+    // Observe connection state
+    val isConnected by viewModel.isConnected.collectAsState()
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -50,7 +56,17 @@ fun MainApp() {
                     }
                 )
                 NavigationBarItem(
-                    icon = { Icon(painterResource(R.drawable.ic_device), contentDescription = "Device") },
+                    icon = {
+                        BadgedBox(
+                            badge = {
+                                if (isConnected) {
+                                    Badge(containerColor = MaterialTheme.colorScheme.primary) { }
+                                }
+                            }
+                        ) {
+                            Icon(painterResource(R.drawable.ic_device), contentDescription = "Device")
+                        }
+                    },
                     label = { Text("Device") },
                     selected = selectedTab == 1,
                     onClick = {
@@ -79,9 +95,9 @@ fun MainApp() {
             startDestination = "home",
             modifier = Modifier.padding(innerPadding)
         ) {
-            composable("home") { HomeScreen() }
-            composable("device") { DeviceScreen() }
-            composable("map") { MapScreen() }
+            composable("home") { HomeScreen(viewModel) }
+            composable("device") { DeviceScreen(viewModel) }
+            composable("map") { MapScreen(viewModel) }
         }
     }
 }
