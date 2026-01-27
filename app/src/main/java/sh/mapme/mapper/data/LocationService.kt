@@ -9,7 +9,7 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.*
-import com.uber.h3core.H3Core
+import sh.mapme.mapper.H3Native
 import kotlinx.coroutines.flow.*
 import sh.mapme.mapper.Constants
 
@@ -24,8 +24,7 @@ class LocationService(private val context: Context) {
         private const val TAG = "LocationService"
     }
 
-    // H3 Core
-    private val h3: H3Core by lazy { H3Core.newInstance() }
+    // H3 via native JNI library
 
     // Fused Location Provider
     private val fusedLocationClient: FusedLocationProviderClient =
@@ -76,32 +75,40 @@ class LocationService(private val context: Context) {
 
     fun startTracking() {
         if (_isTracking.value) return
+
+        // Re-check permissions
+        updatePermissionStatus()
+
         if (_authorizationStatus.value != PermissionStatus.GRANTED) {
-            Log.w(TAG, "Location permission not granted")
+            Log.w(TAG, "Location permission not granted, status: ${_authorizationStatus.value}")
             return
         }
 
-        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000)
-            .setMinUpdateIntervalMillis(2000)
-            .setMinUpdateDistanceMeters(10f)
-            .build()
+        try {
+            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000)
+                .setMinUpdateIntervalMillis(2000)
+                .setMinUpdateDistanceMeters(10f)
+                .build()
 
-        locationCallback = object : LocationCallback() {
-            override fun onLocationResult(result: LocationResult) {
-                result.lastLocation?.let { location ->
-                    updateLocation(location)
+            locationCallback = object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    result.lastLocation?.let { location ->
+                        updateLocation(location)
+                    }
                 }
             }
+
+            fusedLocationClient.requestLocationUpdates(
+                locationRequest,
+                locationCallback!!,
+                Looper.getMainLooper()
+            )
+
+            _isTracking.value = true
+            Log.d(TAG, "Started tracking successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start tracking", e)
         }
-
-        fusedLocationClient.requestLocationUpdates(
-            locationRequest,
-            locationCallback!!,
-            Looper.getMainLooper()
-        )
-
-        _isTracking.value = true
-        Log.d(TAG, "Started tracking")
     }
 
     fun stopTracking() {
@@ -116,13 +123,18 @@ class LocationService(private val context: Context) {
     private fun updateLocation(location: Location) {
         _currentLocation.value = location
 
-        // Calculate H3 index
         try {
-            val h3Index = h3.latLngToCellAddress(
+            // Calculate H3 index using native library
+            val h3Index = H3Native.latLngToCell(
                 location.latitude,
                 location.longitude,
                 Constants.H3_RESOLUTION
             )
+
+            if (h3Index.isEmpty()) {
+                Log.w(TAG, "H3 returned empty index")
+                return
+            }
 
             val previousH3 = _currentH3.value
             _currentH3.value = h3Index
@@ -154,8 +166,7 @@ class LocationService(private val context: Context) {
      */
     fun getH3Boundary(h3Index: String): List<Pair<Double, Double>>? {
         return try {
-            val boundary = h3.cellToBoundary(h3Index)
-            boundary.map { Pair(it.lat, it.lng) }
+            H3Native.getCellBoundary(h3Index)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get H3 boundary for $h3Index", e)
             null
@@ -167,8 +178,7 @@ class LocationService(private val context: Context) {
      */
     fun getH3Center(h3Index: String): Pair<Double, Double>? {
         return try {
-            val center = h3.cellToLatLng(h3Index)
-            Pair(center.lat, center.lng)
+            H3Native.getCellCenter(h3Index)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get H3 center for $h3Index", e)
             null

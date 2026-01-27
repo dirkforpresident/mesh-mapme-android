@@ -21,9 +21,11 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Polygon
+import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import sh.mapme.mapper.MainViewModel
 import sh.mapme.mapper.MapmeApp
+import java.io.File
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -50,9 +52,13 @@ fun MapScreen(
         )
     )
 
+    // Configure osmdroid once
     LaunchedEffect(Unit) {
-        // Configure osmdroid
-        Configuration.getInstance().userAgentValue = context.packageName
+        Configuration.getInstance().apply {
+            userAgentValue = context.packageName
+            osmdroidBasePath = File(context.cacheDir, "osmdroid")
+            osmdroidTileCache = File(context.cacheDir, "osmdroid/tiles")
+        }
 
         if (!locationPermissions.allPermissionsGranted) {
             locationPermissions.launchMultiplePermissionRequest()
@@ -87,16 +93,28 @@ fun MapScreen(
 
     // Remember the map view
     val mapView = remember {
+        // Ensure config is set before creating map
+        Configuration.getInstance().apply {
+            userAgentValue = context.packageName
+            osmdroidBasePath = File(context.cacheDir, "osmdroid")
+            osmdroidTileCache = File(context.cacheDir, "osmdroid/tiles")
+        }
+
         MapView(context).apply {
             setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
+            zoomController.setVisibility(org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER)
             controller.setZoom(14.0)
             controller.setCenter(defaultLocation)
 
-            // Add location overlay
-            val locationOverlay = MyLocationNewOverlay(this)
-            locationOverlay.enableMyLocation()
-            overlays.add(locationOverlay)
+            // Add location overlay with proper provider
+            try {
+                val locationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(context), this)
+                locationOverlay.enableMyLocation()
+                overlays.add(locationOverlay)
+            } catch (e: Exception) {
+                // Ignore if location overlay fails
+            }
         }
     }
 
@@ -121,65 +139,75 @@ fun MapScreen(
         mapView.invalidate()
     }
 
-    // Update camera when location changes
+    // Center map on first location fix only
+    var hasInitialLocation by remember { mutableStateOf(false) }
     LaunchedEffect(currentLocation) {
-        currentLocation?.let {
-            mapView.controller.animateTo(GeoPoint(it.latitude, it.longitude))
+        if (!hasInitialLocation && currentLocation != null) {
+            hasInitialLocation = true
+            mapView.controller.animateTo(GeoPoint(currentLocation!!.latitude, currentLocation!!.longitude))
+            mapView.controller.setZoom(16.0)
         }
     }
 
     // Update hex overlays
     LaunchedEffect(serverHexes, visitedHexes, sessionHexData.keys.toList()) {
-        // Remove old polygon overlays (keep location overlay)
-        mapView.overlays.removeAll { it is Polygon }
+        try {
+            // Remove old polygon overlays (keep location overlay)
+            mapView.overlays.removeAll { it is Polygon }
 
-        // Server hexes (from API)
-        serverHexes.forEach { hex ->
-            val boundary = MapmeApp.instance.locationService.getH3Boundary(hex.h)
-            boundary?.let { coords ->
-                val polygon = Polygon().apply {
-                    points = coords.map { GeoPoint(it.first, it.second) }
-                    fillPaint.color = AndroidColor.argb(
-                        128,
-                        hex.color.r.toInt(),
-                        hex.color.g.toInt(),
-                        hex.color.b.toInt()
-                    )
-                    outlinePaint.color = AndroidColor.rgb(
-                        hex.color.r.toInt(),
-                        hex.color.g.toInt(),
-                        hex.color.b.toInt()
-                    )
-                    outlinePaint.strokeWidth = 2f
-                }
-                mapView.overlays.add(polygon)
-            }
-        }
-
-        // Session hexes (visited this session)
-        visitedHexes.forEach { hexId ->
-            val boundary = MapmeApp.instance.locationService.getH3Boundary(hexId)
-            boundary?.let { coords ->
-                val hasSignal = sessionHexData.containsKey(hexId)
-                val polygon = Polygon().apply {
-                    points = coords.map { GeoPoint(it.first, it.second) }
-                    fillPaint.color = if (hasSignal) {
-                        AndroidColor.argb(77, 0, 255, 0) // Green with alpha
-                    } else {
-                        AndroidColor.argb(51, 0, 0, 255) // Blue with alpha
+            // Server hexes (from API)
+            serverHexes.forEach { hex ->
+                try {
+                    val boundary = MapmeApp.instance.locationService.getH3Boundary(hex.h)
+                    boundary?.let { coords ->
+                        val hexColor = hex.getColor()
+                        val polygon = Polygon().apply {
+                            points = coords.map { GeoPoint(it.first, it.second) }
+                            fillPaint.color = AndroidColor.argb(
+                                128,
+                                (hexColor.r * 255).toInt(),
+                                (hexColor.g * 255).toInt(),
+                                (hexColor.b * 255).toInt()
+                            )
+                            outlinePaint.color = AndroidColor.rgb(
+                                (hexColor.r * 255).toInt(),
+                                (hexColor.g * 255).toInt(),
+                                (hexColor.b * 255).toInt()
+                            )
+                            outlinePaint.strokeWidth = 2f
+                        }
+                        mapView.overlays.add(polygon)
                     }
-                    outlinePaint.color = if (hasSignal) {
-                        AndroidColor.GREEN
-                    } else {
-                        AndroidColor.BLUE
-                    }
-                    outlinePaint.strokeWidth = 3f
-                }
-                mapView.overlays.add(polygon)
+                } catch (e: Exception) { /* skip invalid hex */ }
             }
-        }
 
-        mapView.invalidate()
+            // Session hexes (visited this session)
+            visitedHexes.forEach { hexId ->
+                try {
+                    val boundary = MapmeApp.instance.locationService.getH3Boundary(hexId)
+                    boundary?.let { coords ->
+                        val hasSignal = sessionHexData.containsKey(hexId)
+                        val polygon = Polygon().apply {
+                            points = coords.map { GeoPoint(it.first, it.second) }
+                            fillPaint.color = if (hasSignal) {
+                                AndroidColor.argb(77, 0, 255, 0) // Green with alpha
+                            } else {
+                                AndroidColor.argb(51, 0, 0, 255) // Blue with alpha
+                            }
+                            outlinePaint.color = if (hasSignal) {
+                                AndroidColor.GREEN
+                            } else {
+                                AndroidColor.BLUE
+                            }
+                            outlinePaint.strokeWidth = 3f
+                        }
+                        mapView.overlays.add(polygon)
+                    }
+                } catch (e: Exception) { /* skip invalid hex */ }
+            }
+
+            mapView.invalidate()
+        } catch (e: Exception) { /* ignore overlay errors */ }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -293,21 +321,46 @@ fun MapScreen(
             }
         }
 
-        // Map style toggle (bottom-right)
-        Card(
+        // Map controls (top-right): location + dark/light toggle
+        Row(
             modifier = Modifier
                 .padding(12.dp)
-                .align(Alignment.BottomEnd)
-                .clickable { useDarkMap = !useDarkMap },
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
-            )
+                .align(Alignment.TopEnd),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = if (useDarkMap) "☀" else "🌙",
-                modifier = Modifier.padding(12.dp),
-                style = MaterialTheme.typography.titleMedium
-            )
+            // Center on my location
+            Card(
+                modifier = Modifier
+                    .clickable {
+                        currentLocation?.let {
+                            mapView.controller.animateTo(GeoPoint(it.latitude, it.longitude))
+                            mapView.controller.setZoom(16.0)
+                        }
+                    },
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+                )
+            ) {
+                Text(
+                    text = "◎",
+                    modifier = Modifier.padding(12.dp),
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
+            // Map style toggle
+            Card(
+                modifier = Modifier
+                    .clickable { useDarkMap = !useDarkMap },
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+                )
+            ) {
+                Text(
+                    text = if (useDarkMap) "☀" else "🌙",
+                    modifier = Modifier.padding(12.dp),
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
         }
 
         // GPS indicator

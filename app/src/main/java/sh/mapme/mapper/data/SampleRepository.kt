@@ -38,8 +38,12 @@ class SampleRepository(private val context: Context) {
     // API Service reference
     var hexService: HexService? = null
 
-    // BLE Manager reference (for callbacks)
+    // BLE Manager reference (for session token and device info)
     var bleManager: BleManager? = null
+
+    // Getter for session verification status
+    val isSessionVerified: Boolean
+        get() = bleManager?.sessionVerified?.value == true
 
     init {
         // Load persisted samples on init
@@ -110,9 +114,27 @@ class SampleRepository(private val context: Context) {
             if (samplesToUpload.isEmpty()) return@launch
 
             val service = hexService ?: return@launch
+            val ble = bleManager ?: return@launch
+
+            // Check if we have a session token (verification is optional - server decides)
+            val token = ble.sessionToken
+            if (token == null) {
+                Log.d(TAG, "Upload skipped: No session token (not connected or signing failed)")
+                return@launch
+            }
+            // Note: We try to upload even with unverified sessions
+            // The server will accept or reject based on its policy
+            if (!ble.sessionVerified.value) {
+                Log.d(TAG, "Uploading with unverified session (server may reject)")
+            }
 
             try {
-                val success = service.uploadSamples(samplesToUpload)
+                val success = service.uploadSamples(
+                    samples = samplesToUpload,
+                    sessionToken = token,
+                    selfInfo = ble.selfInfo.value,
+                    deviceInfo = ble.deviceInfo.value
+                )
                 if (success) {
                     // Remove uploaded samples
                     val remaining = _samples.value.drop(samplesToUpload.size)
@@ -124,8 +146,7 @@ class SampleRepository(private val context: Context) {
                     saveTotalUploaded()
 
                     // Notify BLE Manager
-                    bleManager?.incrementUploaded(samplesToUpload.size)
-                    bleManager?.setSessionVerified(true)
+                    ble.incrementUploaded(samplesToUpload.size)
 
                     Log.d(TAG, "Uploaded ${samplesToUpload.size} samples, ${remaining.size} remaining")
                 }

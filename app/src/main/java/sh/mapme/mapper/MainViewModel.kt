@@ -30,6 +30,7 @@ class MainViewModel : ViewModel() {
     val recentRxPackets = bleManager.recentRxPackets
     val privacyMode = bleManager.privacyMode
     val selfInfo = bleManager.selfInfo
+    val deviceInfo = bleManager.deviceInfo
     val debugLog = bleManager.debugLog
     val isTxActive = bleManager.isTxActive
     val coverageChannelReady = bleManager.coverageChannelReady
@@ -87,4 +88,5 @@ class MainViewModel : ViewModel() {
 
     fun refreshLiveMappers() = hexService.fetchLiveMappers()
     fun refreshLeaderboard() = hexService.fetchLeaderboard()
+    fun clearPendingSamples() = sampleRepository.clearAll()
 }

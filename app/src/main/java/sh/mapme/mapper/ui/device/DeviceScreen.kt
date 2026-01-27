@@ -24,7 +24,7 @@ import sh.mapme.mapper.MainViewModel
 import sh.mapme.mapper.R
 import sh.mapme.mapper.data.BleManager
 
-@OptIn(ExperimentalPermissionsApi::class)
+@OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun DeviceScreen(
     viewModel: MainViewModel = viewModel()
@@ -121,91 +121,86 @@ fun ScanningScreen(viewModel: MainViewModel) {
         label = "scale"
     )
 
-    Column(
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Spacer(modifier = Modifier.height(40.dp))
+        item {
+            Spacer(modifier = Modifier.height(20.dp))
 
-        // Animated antenna icon
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.size(180.dp)
-        ) {
-            if (isScanning) {
-                repeat(3) { index ->
-                    Surface(
-                        modifier = Modifier
-                            .size(120.dp)
-                            .scale(scale + index * 0.3f),
-                        shape = MaterialTheme.shapes.extraLarge,
-                        color = MaterialTheme.colorScheme.primary.copy(
-                            alpha = (0.3f - index * 0.1f).coerceAtLeast(0f)
-                        )
-                    ) {}
-                }
-            }
-
-            Surface(
-                modifier = Modifier.size(100.dp),
-                shape = MaterialTheme.shapes.extraLarge,
-                color = MaterialTheme.colorScheme.primaryContainer
+            // Animated antenna icon
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.size(180.dp)
             ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_device),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .padding(24.dp)
-                        .fillMaxSize(),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Text(
-            text = if (isScanning) "Scanning..." else if (discoveredDevices.isEmpty()) "No Devices Found" else "Devices Found",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = if (isScanning) "Looking for MeshCore devices nearby"
-            else "Make sure your MeshCore device is powered on",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(
-            onClick = {
-                if (isScanning) viewModel.stopScanning() else viewModel.startScanning()
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp)
-        ) {
-            Text(if (isScanning) "Stop Scanning" else "Start Scanning")
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Device list
-        if (discoveredDevices.isNotEmpty()) {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(discoveredDevices) { device ->
-                    DeviceCard(device = device) {
-                        viewModel.connect(device)
+                if (isScanning) {
+                    repeat(3) { index ->
+                        Surface(
+                            modifier = Modifier
+                                .size(120.dp)
+                                .scale(scale + index * 0.3f),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            color = MaterialTheme.colorScheme.primary.copy(
+                                alpha = (0.3f - index * 0.1f).coerceAtLeast(0f)
+                            )
+                        ) {}
                     }
                 }
+
+                Surface(
+                    modifier = Modifier.size(100.dp),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_device),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(24.dp)
+                            .fillMaxSize(),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+
+        item {
+            Text(
+                text = if (isScanning) "Scanning..." else if (discoveredDevices.isEmpty()) "No Devices Found" else "Devices Found",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = if (isScanning) "Looking for MeshCore devices nearby"
+                else "Make sure your MeshCore device is powered on",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        item {
+            Button(
+                onClick = {
+                    if (isScanning) viewModel.stopScanning() else viewModel.startScanning()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+            ) {
+                Text(if (isScanning) "Stop Scanning" else "Start Scanning")
+            }
+        }
+
+        // Device list
+        items(discoveredDevices) { device ->
+            DeviceCard(device = device) {
+                viewModel.connect(device)
             }
         }
     }
@@ -259,6 +254,7 @@ fun DeviceCard(device: BluetoothDevice, onClick: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConnectedScreen(viewModel: MainViewModel) {
     val connectedDeviceName by viewModel.connectedDeviceName.collectAsState()
@@ -318,15 +314,21 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                                         containerColor = MaterialTheme.colorScheme.primaryContainer
                                     )
                                 )
-                                if (sessionVerified) {
-                                    AssistChip(
-                                        onClick = {},
-                                        label = { Text("Verified", style = MaterialTheme.typography.labelSmall) },
-                                        colors = AssistChipDefaults.assistChipColors(
-                                            containerColor = MaterialTheme.colorScheme.secondaryContainer
+                                AssistChip(
+                                    onClick = {},
+                                    label = {
+                                        Text(
+                                            if (sessionVerified) "Verified" else "Unverified",
+                                            style = MaterialTheme.typography.labelSmall
                                         )
+                                    },
+                                    colors = AssistChipDefaults.assistChipColors(
+                                        containerColor = if (sessionVerified)
+                                            MaterialTheme.colorScheme.secondaryContainer
+                                        else
+                                            MaterialTheme.colorScheme.errorContainer
                                     )
-                                }
+                                )
                             }
                         }
 
@@ -340,7 +342,7 @@ fun ConnectedScreen(viewModel: MainViewModel) {
 
                     if (showDetails) {
                         Spacer(modifier = Modifier.height(16.dp))
-                        HorizontalDivider()
+                        Divider()
                         Spacer(modifier = Modifier.height(12.dp))
 
                         selfInfo?.let { info ->
@@ -350,19 +352,27 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                             DetailRow("TX Power", "${info.txPower} / ${info.maxTxPower} dBm")
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Button(
-                            onClick = { viewModel.disconnect() },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Disconnect")
+                        val deviceInfo = viewModel.deviceInfo.collectAsState().value
+                        deviceInfo?.let { info ->
+                            if (info.hardware.isNotEmpty()) {
+                                DetailRow("Hardware", info.hardware)
+                            }
                         }
                     }
                 }
+            }
+        }
+
+        // Disconnect Button (always visible)
+        item {
+            OutlinedButton(
+                onClick = { viewModel.disconnect() },
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Disconnect")
             }
         }
 
@@ -519,14 +529,23 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                     ) {
                         Text(
                             text = "${pendingSamples.size} samples waiting",
-                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.weight(1f)
                         )
-                        Spacer(modifier = Modifier.weight(1f))
                         if (sessionVerified) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
                                 strokeWidth = 2.dp
                             )
+                            Spacer(modifier = Modifier.width(12.dp))
+                        }
+                        TextButton(
+                            onClick = { viewModel.clearPendingSamples() },
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        ) {
+                            Text("Clear")
                         }
                     }
                 }

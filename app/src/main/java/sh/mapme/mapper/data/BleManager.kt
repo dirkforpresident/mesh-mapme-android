@@ -81,6 +81,22 @@ class BleManager(private val context: Context) {
     private val _sessionVerified = MutableStateFlow(false)
     val sessionVerified: StateFlow<Boolean> = _sessionVerified.asStateFlow()
 
+    // Signing state
+    private var pendingChallenge: String? = null
+    private var pendingSignature: ByteArray? = null
+    private var maxSignDataLen: Int = 0
+    private var signingInProgress = false  // Prevent duplicate signing flows
+    private var signingRetryCount = 0  // Retry counter for signing
+    private var appStartSent = false  // Prevent duplicate AppStart
+
+    // Auto-reconnect for verification
+    private var lastConnectedDevice: BluetoothDevice? = null
+    private var autoReconnectCount = 0  // Prevent infinite reconnect loops
+
+    // Session token (for API uploads)
+    private var _sessionToken: String? = null
+    val sessionToken: String? get() = _sessionToken
+
     // RX Packets
     data class RxPacket(
         val timestamp: Date,
@@ -107,12 +123,20 @@ class BleManager(private val context: Context) {
     // Coverage channel
     private val _coverageChannelReady = MutableStateFlow(false)
     val coverageChannelReady: StateFlow<Boolean> = _coverageChannelReady.asStateFlow()
+    private var coverageChannelIndex: Int = 0
+    private var sessionChannelKey: ByteArray = ByteArray(16)
+    private var pendingChannelCheck: Int = 0
 
     // Timing
     private var lastRxTime: Date? = null
     private var lastTxTime: Date? = null
     private var lastManualPingTime: Date? = null
     private var lastManualDiscoverTime: Date? = null
+
+    // Timer jobs for auto-discovery and coverage TX (only in LIVE mode)
+    private var discoverTimerJob: Job? = null
+    private var coverageTxDelayJob: Job? = null
+    private var coverageTxIntervalJob: Job? = null
 
     // Current H3 (set by LocationService)
     var currentH3: String? = null
@@ -189,12 +213,16 @@ class BleManager(private val context: Context) {
 
     fun connect(device: BluetoothDevice) {
         stopScanning()
+        lastConnectedDevice = device
         log("BLE", "Connecting to ${device.name ?: device.address}...", "blue")
 
         bluetoothGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
     }
 
     fun disconnect() {
+        // Stop all timers
+        stopTxTimers()
+
         bluetoothGatt?.disconnect()
         bluetoothGatt?.close()
         bluetoothGatt = null
@@ -208,6 +236,9 @@ class BleManager(private val context: Context) {
         log("BLE", "Disconnected", "orange")
     }
 
+    // Current MTU (default is 23, but we request higher)
+    private var currentMtu: Int = 23
+
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             when (newState) {
@@ -215,7 +246,9 @@ class BleManager(private val context: Context) {
                     Log.d(TAG, "Connected to GATT server")
                     _isConnected.value = true
                     _connectedDeviceName.value = gatt.device.name ?: gatt.device.address
-                    gatt.discoverServices()
+                    // Request larger MTU before service discovery (important for SignData!)
+                    Log.d(TAG, "Requesting MTU 128...")
+                    gatt.requestMtu(128)
                     log("BLE", "Connected!", "green")
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
@@ -227,35 +260,56 @@ class BleManager(private val context: Context) {
             }
         }
 
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                currentMtu = mtu
+                Log.d(TAG, "MTU changed to $mtu bytes")
+                log("BLE", "MTU: $mtu", "green")
+            } else {
+                Log.w(TAG, "MTU request failed with status $status, using default")
+            }
+            // Discover services after MTU negotiation
+            gatt.discoverServices()
+        }
+
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            Log.d(TAG, "onServicesDiscovered called, status=$status")
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 val service = gatt.getService(Constants.SERVICE_UUID)
+                Log.d(TAG, "Service lookup result: ${service != null}")
                 if (service != null) {
                     rxCharacteristic = service.getCharacteristic(Constants.RX_CHARACTERISTIC)
                     txCharacteristic = service.getCharacteristic(Constants.TX_CHARACTERISTIC)
+                    Log.d(TAG, "RX characteristic: ${rxCharacteristic != null}, TX characteristic: ${txCharacteristic != null}")
 
                     // Enable notifications on TX characteristic
                     txCharacteristic?.let { tx ->
-                        gatt.setCharacteristicNotification(tx, true)
+                        val notifyResult = gatt.setCharacteristicNotification(tx, true)
+                        Log.d(TAG, "setCharacteristicNotification result: $notifyResult")
+
                         val descriptor = tx.getDescriptor(
                             UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
                         )
+                        Log.d(TAG, "Descriptor found: ${descriptor != null}")
                         descriptor?.let {
                             it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                            gatt.writeDescriptor(it)
+                            val writeResult = gatt.writeDescriptor(it)
+                            Log.d(TAG, "Descriptor write initiated: $writeResult")
                         }
+                    } ?: run {
+                        Log.e(TAG, "TX characteristic is null!")
                     }
 
-                    log("BLE", "Services discovered, ready!", "green")
-
-                    // Send app start command
-                    scope.launch {
-                        delay(500)
-                        sendAppStart()
-                    }
+                    log("BLE", "Services ready", "green")
+                    // NOTE: AppStart is sent from onDescriptorWrite callback
+                    // Do NOT send it here to avoid race conditions with duplicate signing flows
                 } else {
+                    Log.e(TAG, "Nordic UART Service NOT FOUND!")
                     log("BLE", "Nordic UART Service not found!", "red")
                 }
+            } else {
+                Log.e(TAG, "onServicesDiscovered failed with status: $status")
+                log("BLE", "Service discovery failed: $status", "red")
             }
         }
 
@@ -278,6 +332,31 @@ class BleManager(private val context: Context) {
                 characteristic.value?.let { handleRxData(it) }
             }
         }
+
+        override fun onDescriptorWrite(
+            gatt: BluetoothGatt,
+            descriptor: BluetoothGattDescriptor,
+            status: Int
+        ) {
+            Log.d(TAG, "onDescriptorWrite called, status=$status, descriptor=${descriptor.uuid}")
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                log("BLE", "Notifications enabled", "green")
+                // Now send AppStart since notifications are properly set up
+                scope.launch {
+                    delay(200)
+                    Log.d(TAG, "Sending AppStart after descriptor write...")
+                    sendAppStart()
+                }
+            } else {
+                Log.e(TAG, "Descriptor write FAILED with status: $status")
+                // Try sending AppStart anyway
+                scope.launch {
+                    delay(200)
+                    Log.w(TAG, "Sending AppStart despite descriptor write failure...")
+                    sendAppStart()
+                }
+            }
+        }
     }
 
     // MARK: - TX (Send data)
@@ -297,13 +376,244 @@ class BleManager(private val context: Context) {
     }
 
     private fun sendAppStart() {
-        // AppStart command with flags
-        val payload = byteArrayOf(
-            0x07, // flags: request selfInfo + deviceInfo + channels
-            Constants.DEBUG_BUILD.toByte()
-        )
-        sendCommand(CommandCode.APP_START, payload)
-        log("TX", "AppStart (b${Constants.DEBUG_BUILD})", "blue")
+        // Prevent duplicate AppStart
+        if (appStartSent) {
+            Log.d(TAG, "AppStart already sent, skipping duplicate")
+            return
+        }
+        appStartSent = true
+
+        // AppStart Command Format (from iOS):
+        // Byte 0: 0x01 (CommandCode.AppStart)
+        // Byte 1: 0x01 (appVer)
+        // Bytes 2-7: 0x00 (reserved, 6 bytes)
+        // Bytes 8+: appName as string
+        val appName = "MeshMapper"
+        val command = byteArrayOf(
+            CommandCode.APP_START.value,  // 0x01
+            0x01,                          // appVer
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00  // reserved (6 bytes)
+        ) + appName.toByteArray(Charsets.UTF_8)
+
+        sendRawData(command)
+        log("TX", "AppStart", "blue")
+        Log.d(TAG, "AppStart sent (${command.size} bytes): ${command.toHexString()}")
+    }
+
+    // MARK: - Signing Commands
+
+    private fun sendSignStart() {
+        sendCommand(CommandCode.SIGN_START)
+        Log.d(TAG, "SignStart sent (0x21)")
+    }
+
+    private fun sendSignData(data: ByteArray) {
+        sendCommand(CommandCode.SIGN_DATA, data)
+        Log.d(TAG, "SignData sent (${data.size} bytes)")
+    }
+
+    private fun sendSignFinish() {
+        sendCommand(CommandCode.SIGN_FINISH)
+        Log.d(TAG, "SignFinish sent (0x23)")
+    }
+
+    private fun sendDeviceQuery() {
+        // DeviceQuery Command: [0x16][appTargetVer: 1 byte]
+        val payload = byteArrayOf(0x01) // protocol version
+        sendCommand(CommandCode.DEVICE_QUERY, payload)
+        Log.d(TAG, "DeviceQuery sent (0x16 0x01)")
+    }
+
+    // MARK: - Signing Flow
+
+    private fun startSigningFlow() {
+        // Prevent duplicate signing flows
+        if (signingInProgress) return
+
+        val info = _selfInfo.value ?: run {
+            Log.e(TAG, "Cannot start signing - no SelfInfo")
+            return
+        }
+        if (_isVerified.value) return
+
+        signingInProgress = true
+        Log.d(TAG, "Starting signing flow...")
+        log("TX", "Signing...", "orange")
+
+        // Step 1: Send SignStart (0x21)
+        sendSignStart()
+
+        // Timeout for SignatureReady response - retry once, then create unverified session
+        scope.launch {
+            delay(3000)
+            if (signingInProgress && !waitingForSignature && !_isVerified.value) {
+                signingInProgress = false
+
+                if (signingRetryCount < 1) {
+                    // Retry once
+                    signingRetryCount++
+                    Log.d(TAG, "Signing timeout - retrying (attempt $signingRetryCount)")
+                    log("TX", "Retrying sign...", "orange")
+                    delay(500)
+                    startSigningFlow()
+                } else if (autoReconnectCount < 1) {
+                    // Auto-reconnect once to retry verification
+                    autoReconnectCount++
+                    Log.d(TAG, "Signing failed - auto-reconnecting (attempt $autoReconnectCount)")
+                    log("BLE", "Reconnecting...", "orange")
+                    val device = lastConnectedDevice
+                    if (device != null) {
+                        // Disconnect and reconnect after a short delay
+                        disconnect()
+                        delay(1000)
+                        connect(device)
+                    }
+                } else {
+                    // Give up and create unverified session
+                    Log.w(TAG, "Signing failed after reconnect - creating unverified session")
+                    log("RX", "Sign not supported", "orange")
+                    val selfInfo = _selfInfo.value
+                    if (selfInfo != null) {
+                        createServerSession(selfInfo.publicKey.toHexString(), "", "")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun continueSigningWithData() {
+        // Generate challenge string: "meshmap:{timestamp_ms}:{random}"
+        val timestampMs = System.currentTimeMillis()
+        val randomChars = "abcdefghijklmnopqrstuvwxyz0123456789"
+        val randomString = (1..9).map { randomChars.random() }.joinToString("")
+        val challengeString = "meshmap:$timestampMs:$randomString"
+
+        // Store challenge for server verification later
+        pendingChallenge = challengeString
+
+        // Convert to UTF-8 bytes for signing
+        val challengeData = challengeString.toByteArray(Charsets.UTF_8)
+        Log.d(TAG, "Challenge: $challengeString")
+
+        // Send SignData
+        sendSignData(challengeData)
+
+        // Send SignFinish after a short delay
+        scope.launch {
+            delay(300)
+            sendSignFinish()
+
+            // Wait for signature with timeout
+            delay(8000)
+            if (!_isVerified.value && pendingChallenge != null) {
+                waitingForSignature = false
+                signingInProgress = false
+                log("RX", "Signature timeout", "orange")
+                // Create unverified session
+                val info = _selfInfo.value
+                if (info != null) {
+                    createServerSession(info.publicKey.toHexString(), pendingChallenge!!, "")
+                }
+            }
+        }
+    }
+
+    private fun verifySignatureAndCreateSession(signature: ByteArray) {
+        val info = _selfInfo.value ?: run {
+            Log.d(TAG, "Cannot verify - no SelfInfo")
+            signingInProgress = false
+            return
+        }
+        val challenge = pendingChallenge ?: run {
+            Log.d(TAG, "Cannot verify - no pending challenge")
+            signingInProgress = false
+            return
+        }
+
+        val pubKeyHex = info.publicKey.toHexString()
+        val signatureHex = signature.toHexString()
+
+        Log.d(TAG, "Signature received, verifying with server...")
+
+        // Mark as locally verified
+        _isVerified.value = true
+        pendingSignature = signature
+        signingInProgress = false  // Signing flow complete
+        log("RX", "Device signed", "green")
+
+        // Now call server to create session
+        createServerSession(pubKeyHex, challenge, signatureHex)
+    }
+
+    private fun createServerSession(pubkey: String, challenge: String, signature: String) {
+        val hardware = _deviceInfo.value?.hardware ?: ""
+        val isUnverifiedRequest = challenge.isEmpty() || signature.isEmpty()
+
+        scope.launch(Dispatchers.IO) {
+            try {
+                val url = java.net.URL("${Constants.API_BASE_URL}/api/session")
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.doOutput = true
+
+                val body = org.json.JSONObject().apply {
+                    put("pubkey", pubkey)
+                    put("challenge", challenge)
+                    put("signature", signature)
+                    put("hardware", hardware)
+                }
+
+                Log.d(TAG, "POST /api/session (${if (isUnverifiedRequest) "unverified" else "with signature"})")
+
+                connection.outputStream.use { os ->
+                    os.write(body.toString().toByteArray())
+                }
+
+                val responseCode = connection.responseCode
+                if (responseCode == 200) {
+                    val response = connection.inputStream.bufferedReader().readText()
+                    val json = org.json.JSONObject(response)
+
+                    val token = json.optString("token", null)
+                    val verified = json.optBoolean("verified", false)
+
+                    Log.d(TAG, "Session Token: ${token?.take(16)}...")
+                    Log.d(TAG, "Verified: $verified")
+
+                    scope.launch(Dispatchers.Main) {
+                        _sessionToken = token
+                        _sessionVerified.value = verified
+                        pendingChallenge = null  // Clear challenge after server response
+
+                        if (verified) {
+                            autoReconnectCount = 0  // Reset on successful verification
+                            log("RX", "Session verified!", "green")
+                        } else {
+                            log("RX", "Session unverified", "orange")
+                        }
+
+                        // Setup coverage channel regardless of verification
+                        // This allows TX/RX to work even without server verification
+                        if (token != null) {
+                            setupCoverageChannel()
+                        }
+                    }
+                } else {
+                    Log.e(TAG, "Session creation failed: $responseCode")
+                    scope.launch(Dispatchers.Main) {
+                        pendingChallenge = null  // Clear on error too
+                        log("RX", "Session error: $responseCode", "red")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Session creation error", e)
+                scope.launch(Dispatchers.Main) {
+                    pendingChallenge = null  // Clear on error too
+                    log("RX", "Connection error", "red")
+                }
+            }
+        }
     }
 
     fun sendDiscover() {
@@ -317,20 +627,17 @@ class BleManager(private val context: Context) {
         sendDiscover()
     }
 
-    fun sendManualPing() {
-        if (!canSendManualPing()) return
-        lastManualPingTime = Date()
-        sendCoveragePing()
-    }
-
     fun canSendManualDiscover(): Boolean {
         val last = lastManualDiscoverTime ?: return true
         return Date().time - last.time > Constants.MANUAL_DISCOVER_COOLDOWN
     }
 
     fun canSendManualPing(): Boolean {
-        if (currentH3 == null) return false
+        // iOS: guard privacyMode == "live", isConnected, coverageChannelReady, currentH3 != nil
+        if (_privacyMode.value != "live") return false
+        if (!_isConnected.value) return false
         if (!_coverageChannelReady.value) return false
+        if (currentH3 == null) return false
         val last = lastManualPingTime ?: return true
         return Date().time - last.time > Constants.MANUAL_PING_COOLDOWN
     }
@@ -351,63 +658,413 @@ class BleManager(private val context: Context) {
             return if (remaining > 0) (remaining / 1000).toInt() else 0
         }
 
-    private fun sendCoveragePing() {
-        val h3 = currentH3 ?: return
-        // Build coverage ping message
-        // TODO: Implement full coverage ping with channel secret
-        _txCount.value++
-        _isTxActive.value = true
-        lastTxTime = Date()
-        log("TX", "Coverage Ping", "orange")
+    // MARK: - Coverage Channel Setup
 
-        scope.launch {
-            delay(Constants.TX_TIMEOUT)
+    fun setupCoverageChannel() {
+        if (!_isConnected.value) {
+            Log.d(TAG, "Cannot setup coverage channel - not connected")
+            return
+        }
+
+        // Generate random 16-byte key for this session
+        sessionChannelKey = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
+        val keyPrefix = sessionChannelKey.take(4).joinToString("") { "%02x".format(it) }
+        Log.d(TAG, "Generated session key: $keyPrefix...")
+
+        // Start checking from channel 0
+        pendingChannelCheck = 0
+        sendGetChannel(0)
+    }
+
+    private fun sendGetChannel(index: Int) {
+        pendingChannelCheck = index
+        val payload = byteArrayOf(index.toByte())
+        sendCommand(CommandCode.GET_CHANNELS, payload)
+        Log.d(TAG, "GetChannel sent (idx: $index)")
+    }
+
+    private fun sendSetChannel(index: Int, name: String, secret: ByteArray) {
+        // SetChannel: [0x20][channelIdx: 1 byte][name: 32 bytes null-padded][secret: 16 bytes]
+        val nameBytes = ByteArray(32)
+        name.toByteArray().copyInto(nameBytes, 0, 0, minOf(name.length, 32))
+
+        val payload = byteArrayOf(index.toByte()) + nameBytes + secret.copyOf(16)
+        sendCommand(CommandCode.SET_CHANNEL, payload)
+        Log.d(TAG, "SetChannel sent (idx: $index, name: $name)")
+    }
+
+    private fun sendChannelMessage(channelIdx: Int, message: String) {
+        // SendChannelTxtMsg: [0x03][channelIdx: 1 byte][message bytes...]
+        val payload = byteArrayOf(channelIdx.toByte()) + message.toByteArray()
+        sendCommand(CommandCode.SEND_CHANNEL_TXT_MSG, payload)
+        Log.d(TAG, "Channel message sent (idx: $channelIdx, msg: $message)")
+    }
+
+    // MARK: - TX Timers (only in LIVE mode)
+
+    private fun startTxTimers() {
+        if (_privacyMode.value != "live") return
+        Log.d(TAG, "Starting TX timers (LIVE mode)")
+        startDiscoverTimer()
+        startCoverageTxDelayTimer()
+    }
+
+    private fun stopTxTimers() {
+        discoverTimerJob?.cancel()
+        discoverTimerJob = null
+        coverageTxDelayJob?.cancel()
+        coverageTxDelayJob = null
+        coverageTxIntervalJob?.cancel()
+        coverageTxIntervalJob = null
+        _isTxActive.value = false
+        Log.d(TAG, "TX timers stopped")
+    }
+
+    private fun resetTxTimers() {
+        lastRxTime = Date()
+
+        // Stop coverage TX if active
+        if (_isTxActive.value) {
+            Log.d(TAG, "RX received - stopping coverage TX")
+            coverageTxIntervalJob?.cancel()
+            coverageTxIntervalJob = null
             _isTxActive.value = false
+        }
+
+        // Only restart timers if in LIVE mode
+        if (_privacyMode.value != "live") return
+
+        startDiscoverTimer()
+        startCoverageTxDelayTimer()
+    }
+
+    private fun startDiscoverTimer() {
+        discoverTimerJob?.cancel()
+        discoverTimerJob = scope.launch {
+            delay(Constants.DISCOVER_INTERVAL)
+            onDiscoverTimerFired()
         }
     }
 
+    private fun onDiscoverTimerFired() {
+        if (!_isConnected.value || _privacyMode.value != "live") return
+        Log.d(TAG, "No RX for 30s - sending discover")
+        sendDiscover()
+        log("TX", "Auto discover", "blue")
+
+        // Restart timer for next interval
+        startDiscoverTimer()
+    }
+
+    private fun startCoverageTxDelayTimer() {
+        coverageTxDelayJob?.cancel()
+        coverageTxDelayJob = scope.launch {
+            delay(Constants.COVERAGE_TX_DELAY)  // 5 minutes
+            startCoverageTxInterval()
+        }
+    }
+
+    private fun startCoverageTxInterval() {
+        if (!_isConnected.value || !_coverageChannelReady.value || _privacyMode.value != "live") {
+            Log.d(TAG, "Cannot start coverage TX - not ready")
+            return
+        }
+
+        // Stop discover timer - switching to ping mode
+        discoverTimerJob?.cancel()
+        discoverTimerJob = null
+
+        _isTxActive.value = true
+        log("TX", "TX Mode started (5min idle)", "orange")
+        Log.d(TAG, "Starting coverage channel TX")
+
+        // Send first message immediately
+        sendCoverageMessage()
+
+        // Schedule next with random interval
+        scheduleNextCoverageTx()
+    }
+
+    private fun scheduleNextCoverageTx() {
+        coverageTxIntervalJob?.cancel()
+        val randomInterval = (Constants.COVERAGE_TX_MIN_INTERVAL..Constants.COVERAGE_TX_MAX_INTERVAL).random()
+        Log.d(TAG, "Next ping in ${randomInterval / 1000}s")
+
+        coverageTxIntervalJob = scope.launch {
+            delay(randomInterval)
+            if (_isTxActive.value) {
+                sendCoverageMessage()
+                scheduleNextCoverageTx()
+            }
+        }
+    }
+
+    private fun sendCoverageMessage() {
+        if (!_isConnected.value || !_coverageChannelReady.value) return
+        val h3 = currentH3 ?: run {
+            Log.d(TAG, "No GPS - skipping coverage message")
+            return
+        }
+
+        sendChannelMessage(coverageChannelIndex, h3)
+        _txCount.value++
+        lastTxTime = Date()
+        log("TX", "Auto TX #${_txCount.value}", "orange")
+    }
+
+    fun sendManualPing() {
+        if (!canSendManualPing()) {
+            Log.d(TAG, "Manual ping blocked - cooldown: $manualPingCooldownRemaining s")
+            return
+        }
+        val h3 = currentH3 ?: run {
+            Log.d(TAG, "Manual ping blocked - no GPS")
+            return
+        }
+
+        sendChannelMessage(coverageChannelIndex, h3)
+        lastManualPingTime = Date()
+        _txCount.value++
+        log("TX", "Manual ping #${_txCount.value}", "orange")
+        Log.d(TAG, "Manual ping sent: $h3")
+    }
+
     // MARK: - RX (Receive data)
+
+    // Buffer timeout job for fragmented messages
+    private var bufferTimeoutJob: Job? = null
+    private var lastFragmentSize: Int = 0
+    private var bufferTimedOut: Boolean = false  // Flag to force processing after timeout
 
     private fun handleRxData(data: ByteArray) {
         if (data.isEmpty()) return
 
         // Add to buffer
         rxBuffer += data
+        lastFragmentSize = data.size
+        bufferTimedOut = false  // Reset timeout flag on new data
 
-        // Try to parse complete messages
-        while (rxBuffer.isNotEmpty()) {
-            val code = rxBuffer[0]
-
-            // Check if it's a response code or push code
-            val responseCode = ResponseCode.fromByte(code)
-            val pushCode = PushCode.fromByte(code)
-
-            when {
-                responseCode != null -> handleResponse(responseCode, rxBuffer)
-                pushCode != null -> handlePush(pushCode, rxBuffer)
-                else -> {
-                    Log.w(TAG, "Unknown code: 0x${code.toHexString()}")
-                    rxBuffer = byteArrayOf() // Clear buffer on unknown
-                }
+        // Enhanced logging for signature debugging
+        if (waitingForSignature) {
+            // Log.d(TAG, "DEBUG: Received while waiting for signature. First byte: 0x${"%02x".format(data[0])}")
+            if (rxBuffer.isNotEmpty()) {
+                // Log.d(TAG, "DEBUG: Buffer first byte: 0x${"%02x".format(rxBuffer[0])}, total size: ${rxBuffer.size}")
             }
+        }
 
-            // For now, consume entire buffer per message (simplified)
-            rxBuffer = byteArrayOf()
+        // Cancel pending timeout
+        bufferTimeoutJob?.cancel()
+
+        // BLE MTU is typically 20 bytes. If we get less than 20 bytes,
+        // this is likely the end of the message. If we get exactly 20,
+        // more data might be coming.
+        if (data.size < 20) {
+            // End of message - process immediately
+            processBuffer()
+        } else {
+            // Might have more data coming - wait a bit
+            startBufferTimeout()
         }
     }
 
+    private fun processBuffer() {
+        if (rxBuffer.isEmpty()) return
+
+        val firstByte = rxBuffer[0]
+        val code = firstByte.toInt() and 0xFF
+
+        // Debug logging for signature detection
+        if (waitingForSignature) {
+            // Log.d(TAG, "DEBUG: processBuffer() code=0x${"%02x".format(code)}, size=${rxBuffer.size}, waiting=true")
+        }
+
+        // Push codes (0x80+) - process entire buffer as one message
+        val pushCode = PushCode.fromByte(firstByte)
+        if (pushCode != null) {
+            handlePush(pushCode, rxBuffer)
+            rxBuffer = byteArrayOf()
+            return
+        }
+
+        // IMPORTANT: Check for SelfInfo without prefix BEFORE ResponseCodes!
+        // SelfInfo Type 1=Person, 2=Repeater, 3=Room - but 0x01 is also ResponseCode.ERR
+        // Differentiate by buffer size: SelfInfo is always 57+ bytes, ERR is 1-2 bytes
+        // Variable-length nodeName field requires waiting for end of message
+        if (code in listOf(0x01, 0x02, 0x03)) {
+            if (rxBuffer.size >= 57 && (lastFragmentSize < 20 || bufferTimedOut)) {
+                // Complete message (end fragment received or timeout) - parse now
+                Log.d(TAG, "Parsing as SelfInfo (type=$code, size=${rxBuffer.size}, complete)")
+                parseSelfInfoRaw(rxBuffer)
+                rxBuffer = byteArrayOf()
+                return
+            } else if (rxBuffer.size >= 57) {
+                // Have minimum bytes but might have more coming (nodeName continues)
+                Log.d(TAG, "SelfInfo buffer ${rxBuffer.size} bytes, waiting for end (lastFrag=$lastFragmentSize)")
+                startBufferTimeout()
+                return
+            } else if (code == 0x01 && rxBuffer.size <= 2 && (lastFragmentSize < 20 || bufferTimedOut)) {
+                // ERR response: 1 byte (just 0x01) or 2 bytes (0x01 + error code)
+                val errCode = if (rxBuffer.size >= 2) rxBuffer[1].toInt() and 0xFF else 0
+                Log.d(TAG, "ERR response (code=$errCode)")
+                log("RX", "Error: $errCode", "red")
+                rxBuffer = byteArrayOf()
+                return
+            } else if (rxBuffer.size < 10 && (lastFragmentSize < 20 || bufferTimedOut)) {
+                // Small response that's not SelfInfo - likely an error or ACK
+                Log.d(TAG, "Small response with code 0x${"%02x".format(code)}, size=${rxBuffer.size} - treating as response")
+                rxBuffer = byteArrayOf()
+                return
+            } else {
+                // Waiting for more SelfInfo data
+                Log.d(TAG, "Waiting for more SelfInfo data (have ${rxBuffer.size}, need 57)")
+                startBufferTimeout()
+                return
+            }
+        }
+
+        // SelfInfo with 0x05 prefix
+        if (code == 0x05) {
+            // SelfInfo has variable length (nodeName at end)
+            // Wait for end of message (fragment < 20 bytes) or timeout
+            if (rxBuffer.size >= 58 && (lastFragmentSize < 20 || bufferTimedOut)) {
+                Log.d(TAG, "Parsing SelfInfo with 0x05 prefix (${rxBuffer.size} bytes, complete)")
+                parseSelfInfo(rxBuffer)
+                rxBuffer = byteArrayOf()
+                return
+            } else if (rxBuffer.size >= 58) {
+                Log.d(TAG, "SelfInfo buffer ${rxBuffer.size} bytes, waiting for end (lastFrag=$lastFragmentSize)")
+                startBufferTimeout()
+                return
+            } else {
+                Log.d(TAG, "Waiting for more SelfInfo data with 0x05 prefix (have ${rxBuffer.size}, need 58+)")
+                startBufferTimeout()
+                return
+            }
+        }
+
+        // Other response codes
+        val responseCode = ResponseCode.fromByte(firstByte)
+        if (waitingForSignature) {
+            // Log.d(TAG, "DEBUG: Checking ResponseCode for 0x${"%02x".format(code)}, result=$responseCode")
+        }
+        if (responseCode != null) {
+            val minSize = when (responseCode) {
+                ResponseCode.OK -> 1
+                ResponseCode.ERR -> 1  // Should not reach here (handled above)
+                ResponseCode.SELF_INFO -> 58  // Should not reach here (handled above)
+                ResponseCode.DEVICE_INFO -> 20  // Has variable model field
+                ResponseCode.CHANNEL_INFO -> 50
+                ResponseCode.SIGNATURE_READY -> 6
+                ResponseCode.SIGNATURE -> 65
+                else -> 1
+            }
+
+            // DeviceInfo has variable length (model at end) - wait for end of message
+            if (responseCode == ResponseCode.DEVICE_INFO) {
+                if (rxBuffer.size >= minSize && (lastFragmentSize < 20 || bufferTimedOut)) {
+                    Log.d(TAG, "Parsing DeviceInfo (${rxBuffer.size} bytes, complete)")
+                    handleResponse(responseCode, rxBuffer)
+                    rxBuffer = byteArrayOf()
+                    return
+                } else if (rxBuffer.size >= minSize) {
+                    Log.d(TAG, "DeviceInfo buffer ${rxBuffer.size} bytes, waiting for end (lastFrag=$lastFragmentSize)")
+                    startBufferTimeout()
+                    return
+                }
+            }
+
+            // SIGNATURE is exactly 65 bytes - wait for complete message
+            if (responseCode == ResponseCode.SIGNATURE) {
+                // Log.d(TAG, "DEBUG: *** SIGNATURE CODE 0x14 DETECTED! *** Buffer: ${rxBuffer.size} bytes")
+                // Log.d(TAG, "DEBUG: Buffer hex: ${rxBuffer.sliceArray(0 until minOf(10, rxBuffer.size)).toHexString()}...")
+                if (rxBuffer.size >= 65) {
+                    // Log.d(TAG, "DEBUG: Signature complete (${rxBuffer.size}B) - calling handleResponse")
+                    handleResponse(responseCode, rxBuffer)
+                    rxBuffer = byteArrayOf()
+                    return
+                } else {
+                    // Log.d(TAG, "DEBUG: Signature incomplete (have ${rxBuffer.size}, need 65) - waiting for more")
+                    startBufferTimeout()
+                    return
+                }
+            }
+
+            if (rxBuffer.size >= minSize) {
+                handleResponse(responseCode, rxBuffer)
+                rxBuffer = byteArrayOf()
+                return
+            } else {
+                Log.d(TAG, "Waiting for more data (have ${rxBuffer.size}, need $minSize for $responseCode)")
+                startBufferTimeout()
+                return
+            }
+        }
+
+        // Discover ACK (0x09) - acknowledgment for repeatersRequest
+        if (code == 0x09) {
+            Log.d(TAG, "Discover ACK: ${rxBuffer.toHexString()}")
+            rxBuffer = byteArrayOf()
+            return
+        }
+
+        // Mesh/sync messages (0x89) - routing or sync packets
+        if (code == 0x89) {
+            Log.d(TAG, "Mesh sync: ${rxBuffer.sliceArray(0 until minOf(20, rxBuffer.size)).toHexString()}")
+            rxBuffer = byteArrayOf()
+            return
+        }
+
+        // Known ignorable codes (fragments, routing, etc.)
+        val ignorableCodes = setOf(
+            0x8D, 0x99, 0xC1, 0xB0, 0xF2, 0x7E, 0x34, 0x67, 0xDC, 0xD3,
+            0x6C, 0x74, 0x61, 0x55, 0x9F, 0x35
+        )
+        if (code in ignorableCodes) {
+            // Silently ignore - these are mesh routing fragments
+            rxBuffer = byteArrayOf()
+            return
+        }
+
+        // Unknown code - log and clear
+        Log.w(TAG, "Unknown code: 0x${"%02x".format(firstByte)} (${rxBuffer.size} bytes)")
+        if (waitingForSignature) {
+            // Log.w(TAG, "DEBUG: Unknown data while waiting: ${rxBuffer.sliceArray(0 until minOf(20, rxBuffer.size)).toHexString()}")
+        }
+        rxBuffer = byteArrayOf()
+    }
+
+    private fun startBufferTimeout() {
+        bufferTimeoutJob = scope.launch {
+            delay(150) // Short wait for more fragments (increased from 100ms)
+            if (rxBuffer.isNotEmpty()) {
+                Log.d(TAG, "Buffer timeout - processing ${rxBuffer.size} bytes")
+                bufferTimedOut = true  // Mark as timed out to force processing
+                processBuffer()
+            }
+        }
+    }
+
+    // Track if we're waiting for signature
+    private var waitingForSignature = false
+
     private fun handleResponse(code: ResponseCode, data: ByteArray) {
-        Log.d(TAG, "Response: $code, data: ${data.toHexString()}")
+        Log.d(TAG, "Response: $code (0x${"%02x".format(code.value)}), data[${data.size}]: ${data.sliceArray(0 until minOf(20, data.size)).toHexString()}...")
 
         when (code) {
-            ResponseCode.OK -> log("RX", "OK", "green")
+            ResponseCode.OK -> {
+                log("RX", "OK", "green")
+                // If we're waiting for signature and got OK, signature should follow in next message
+                if (waitingForSignature) {
+                    // Log.d(TAG, "DEBUG: Got OK response, signature (0x14) should follow in next BLE notification")
+                }
+            }
             ResponseCode.ERR -> log("RX", "Error", "red")
             ResponseCode.SELF_INFO -> parseSelfInfo(data)
             ResponseCode.DEVICE_INFO -> parseDeviceInfo(data)
             ResponseCode.CHANNEL_INFO -> parseChannelInfo(data)
             ResponseCode.CHANNEL_MSG_RECV_V3 -> parseChannelMessageV3(data)
             ResponseCode.CHANNEL_MSG_RECV -> parseChannelMessage(data)
-            ResponseCode.SIGNATURE_READY -> log("RX", "Signature ready", "blue")
+            ResponseCode.SIGNATURE_READY -> parseSignatureReady(data)
             ResponseCode.SIGNATURE -> parseSignature(data)
             else -> log("RX", "Response: $code", "gray")
         }
@@ -430,100 +1087,264 @@ class BleManager(private val context: Context) {
     // MARK: - Parsing
 
     private fun parseSelfInfo(data: ByteArray) {
+        // SelfInfo with 0x05 code prefix
         if (data.size < 50) return
+        parseSelfInfoRaw(data.sliceArray(1 until data.size))
+    }
+
+    /**
+     * Parse SelfInfo without code prefix (raw format matching iOS exactly)
+     * Format:
+     * - Bytes 0: type (1)
+     * - Bytes 1: txPower (1)
+     * - Bytes 2: maxTxPower (1)
+     * - Bytes 3-34: publicKey (32)
+     * - Bytes 35-38: advLat (4, LE)
+     * - Bytes 39-42: advLon (4, LE)
+     * - Bytes 43-46: reserved (4)
+     * - Bytes 47-50: radioFreq (4, LE)
+     * - Bytes 51-54: radioBw (4, LE)
+     * - Byte 55: radioSf (1)
+     * - Byte 56: radioCr (1)
+     * - Bytes 57+: nodeName (variable, null-terminated)
+     */
+    private fun parseSelfInfoRaw(data: ByteArray) {
+        if (data.size < 35) {
+            Log.d(TAG, "SelfInfo too short: ${data.size} bytes")
+            return
+        }
 
         try {
-            val buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-            buffer.get() // Skip code byte
+            // Parse using direct array access (like iOS) for accuracy
+            val type = data[0].toInt() and 0xFF
+            val txPower = data[1].toInt() and 0xFF
+            val maxTxPower = data[2].toInt() and 0xFF
+            val publicKey = data.sliceArray(3 until 35)
+
+            val pubkeyHex = publicKey.joinToString("") { "%02x".format(it) }
+            Log.d(TAG, "SelfInfo (${data.size} bytes) - Type: $type, PubKey: ${pubkeyHex.take(16)}...")
+
+            // Parse remaining fields if available
+            var advLat = 0
+            var advLon = 0
+            var radioFreq = 0
+            var radioBw = 0
+            var radioSf = 0
+            var radioCr = 0
+            var nodeName = ""
+
+            if (data.size >= 43) {
+                advLat = ByteBuffer.wrap(data, 35, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                advLon = ByteBuffer.wrap(data, 39, 4).order(ByteOrder.LITTLE_ENDIAN).int
+            }
+
+            if (data.size >= 55) {
+                // Bytes 43-46 are reserved, skip
+                radioFreq = ByteBuffer.wrap(data, 47, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                radioBw = ByteBuffer.wrap(data, 51, 4).order(ByteOrder.LITTLE_ENDIAN).int
+            }
+
+            if (data.size >= 57) {
+                radioSf = data[55].toInt() and 0xFF
+                radioCr = data[56].toInt() and 0xFF
+            }
+
+            if (data.size > 57) {
+                val nameBytes = data.sliceArray(57 until data.size)
+                nodeName = nameBytes.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
+                    .trim { it <= ' ' || it.code == 0 }
+            }
+
+            Log.d(TAG, "SelfInfo parsed: nodeName='$nodeName', freq=$radioFreq, sf=$radioSf, cr=$radioCr")
 
             val info = SelfInfo(
-                nodeName = readString(buffer, 32),
-                publicKey = ByteArray(32).also { buffer.get(it) },
-                radioFreq = buffer.int,
-                radioSf = buffer.get().toInt(),
-                radioCr = buffer.get().toInt(),
-                txPower = buffer.get().toInt(),
-                maxTxPower = buffer.get().toInt(),
-                advLat = if (buffer.remaining() >= 4) buffer.int else 0,
-                advLon = if (buffer.remaining() >= 4) buffer.int else 0
+                nodeName = nodeName,
+                publicKey = publicKey,
+                radioFreq = radioFreq,
+                radioSf = radioSf,
+                radioCr = radioCr,
+                txPower = txPower,
+                maxTxPower = maxTxPower,
+                advLat = advLat,
+                advLon = advLon
             )
 
             _selfInfo.value = info
-            log("RX", "SelfInfo: ${info.nodeName}", "green")
+            log("RX", "Device: ${if (nodeName.isEmpty()) "Node" else nodeName}", "green")
+
+            // Request DeviceInfo for hardware model
+            scope.launch {
+                delay(200)
+                sendDeviceQuery()
+            }
+
+            // Start signing flow after SelfInfo (give device time to be ready)
+            scope.launch {
+                delay(1000)
+                if (!_isVerified.value) {
+                    startSigningFlow()
+                }
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse SelfInfo", e)
+            Log.e(TAG, "Failed to parse SelfInfo: ${e.message}", e)
+        }
+    }
+
+    private fun parseSignatureReady(data: ByteArray) {
+        // SignatureReady Response (0x13):
+        // - Byte 0: Response Code (0x13)
+        // - Byte 1: reserved
+        // - Bytes 2-5: maxSignDataLen (uint32 LE)
+        if (data.size < 6) {
+            Log.d(TAG, "SignatureReady too short: ${data.size} bytes")
+            return
+        }
+
+        // Ignore if signing not in progress (unexpected SignatureReady)
+        if (!signingInProgress) {
+            // Log.d(TAG, "DEBUG: SignatureReady ignored - signing not in progress")
+            return
+        }
+
+        // Ignore if we already started processing SignatureReady
+        if (waitingForSignature) {
+            // Log.d(TAG, "DEBUG: SignatureReady ignored - already processing")
+            return
+        }
+
+        // Mark as processing IMMEDIATELY to prevent duplicate SignatureReady handling
+        waitingForSignature = true
+
+        val buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+        buffer.get() // Skip code
+        buffer.get() // Skip reserved
+        maxSignDataLen = buffer.int
+        // Log.d(TAG, "DEBUG: SignatureReady received! maxSignDataLen=$maxSignDataLen")
+        log("RX", "Sign ready", "green")
+
+        // Continue signing flow with challenge data
+        scope.launch {
+            delay(300)  // Delay to give device time
+            // Log.d(TAG, "DEBUG: Continuing with challenge data...")
+            continueSigningWithData()
         }
     }
 
     private fun parseDeviceInfo(data: ByteArray) {
-        if (data.size < 10) return
+        // DeviceInfo Response Format (from iOS/MeshCore library):
+        // Byte 0: Response Code (0x0D)
+        // Byte 1: firmwareVer (int8)
+        // Bytes 2-7: reserved (6 bytes)
+        // Bytes 8-19: firmware_build_date (12 bytes, C-String, e.g. "19 Feb 2025")
+        // Bytes 20+: manufacturerModel (String, remainder of frame = Hardware!)
+        if (data.size < 20) {
+            Log.d(TAG, "DeviceInfo too short: ${data.size} bytes")
+            return
+        }
 
         try {
-            val buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-            buffer.get() // Skip code byte
+            val fwVer = data[1].toInt() and 0xFF
+            // Bytes 2-7 are reserved, skip them
 
-            val model = readString(buffer, 16)
-            val version = readString(buffer, 16)
+            // Extract firmware_build_date (bytes 8-19, null-terminated)
+            val fwBuildData = data.sliceArray(8 until 20)
+            val fwBuild = fwBuildData.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
 
-            _deviceInfo.value = DeviceInfo(hardware = "$model $version".trim())
-            log("RX", "DeviceInfo: ${_deviceInfo.value?.hardware}", "green")
+            // Extract manufacturerModel (bytes 20+, remainder of frame)
+            val model = if (data.size > 20) {
+                val modelData = data.sliceArray(20 until data.size)
+                modelData.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
+            } else ""
+
+            Log.d(TAG, "DeviceInfo - fwVer: $fwVer, fwBuild: '$fwBuild', model: '$model'")
+
+            _deviceInfo.value = DeviceInfo(hardware = model.ifEmpty { fwBuild })
+            if (_deviceInfo.value?.hardware?.isNotEmpty() == true) {
+                log("RX", "Hardware: ${_deviceInfo.value?.hardware}", "gray")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse DeviceInfo", e)
         }
     }
 
     private fun parseChannelInfo(data: ByteArray) {
-        // Check if this is the coverage channel
-        log("RX", "ChannelInfo received", "blue")
-        _coverageChannelReady.value = true
+        // ChannelInfo Response (0x12):
+        // - Byte 0: Response Code (0x12)
+        // - Byte 1: channelIdx
+        // - Bytes 2-33: name (32 bytes null-terminated)
+        // - Bytes 34-49: secret (16 bytes)
+        if (data.size < 50) {
+            Log.d(TAG, "ChannelInfo too short: ${data.size} bytes")
+            return
+        }
+
+        val channelIdx = data[1].toInt() and 0xFF
+        val nameBytes = data.sliceArray(2 until 34)
+        val name = nameBytes.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
+        val secret = data.sliceArray(34 until 50)
+
+        val secretPrefix = secret.take(4).joinToString("") { "%02x".format(it) }
+        Log.d(TAG, "ChannelInfo - idx: $channelIdx, name: '$name', secret: $secretPrefix...")
+
+        // Check if this is the channel we're checking during setup
+        if (channelIdx != pendingChannelCheck) {
+            Log.d(TAG, "Unexpected channel index $channelIdx, expected $pendingChannelCheck")
+            return
+        }
+
+        // Check if slot is empty or has "coverage" name
+        val isEmptyChannel = name.isEmpty() && secret.all { it == 0.toByte() }
+        val isCoverageChannel = name == "coverage"
+        val keyPrefix = sessionChannelKey.take(4).joinToString("") { "%02x".format(it) }
+
+        if (isEmptyChannel || isCoverageChannel) {
+            // Use this slot
+            Log.d(TAG, "Using slot $channelIdx for coverage channel")
+            sendSetChannel(channelIdx, "coverage", sessionChannelKey)
+
+            scope.launch {
+                delay(300)
+                coverageChannelIndex = channelIdx
+                _coverageChannelReady.value = true
+                val action = if (isEmptyChannel) "Created" else "Updated"
+                log("TX", "$action Ch$channelIdx ($keyPrefix...)", "green")
+
+                // Start TX timers if in LIVE mode
+                if (_privacyMode.value == "live") {
+                    startTxTimers()
+                }
+            }
+        } else {
+            // Slot has different channel - check next slot
+            Log.d(TAG, "Slot $channelIdx has channel '$name' - checking next")
+            if (channelIdx < 7) {
+                scope.launch {
+                    delay(200)
+                    sendGetChannel(channelIdx + 1)
+                }
+            } else {
+                // All slots full - overwrite slot 7
+                Log.d(TAG, "All slots full - overwriting slot 7")
+                sendSetChannel(7, "coverage", sessionChannelKey)
+
+                scope.launch {
+                    delay(300)
+                    coverageChannelIndex = 7
+                    _coverageChannelReady.value = true
+                    log("TX", "Overwrote Ch7 ($keyPrefix...)", "orange")
+
+                    if (_privacyMode.value == "live") {
+                        startTxTimers()
+                    }
+                }
+            }
+        }
     }
 
     private fun parseChannelMessageV3(data: ByteArray) {
-        if (data.size < 20) return
-
-        try {
-            val buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-            buffer.get() // Skip code byte
-
-            val channelIdx = buffer.get().toInt()
-            val rssi = buffer.short.toInt()
-            val snr = buffer.get().toFloat() / 4f
-
-            // Parse path
-            val pathCount = buffer.get().toInt().coerceIn(0, 4)
-            val path = mutableListOf<String>()
-            repeat(pathCount) {
-                val nodeId = ByteArray(4)
-                if (buffer.remaining() >= 4) {
-                    buffer.get(nodeId)
-                    path.add(nodeId.toHexString().takeLast(2).uppercase())
-                }
-            }
-
-            if (path.isNotEmpty()) {
-                val packet = RxPacket(
-                    timestamp = Date(),
-                    path = path,
-                    rssi = rssi,
-                    snr = snr
-                )
-
-                val currentPackets = _recentRxPackets.value.toMutableList()
-                currentPackets.add(0, packet)
-                if (currentPackets.size > 20) currentPackets.removeLast()
-                _recentRxPackets.value = currentPackets
-
-                _rxCount.value++
-                lastRxTime = Date()
-
-                log("RX", "${path.joinToString("→")} $rssi dBm", "green")
-
-                // Create sample for upload
-                createRxSample(packet)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse ChannelMessageV3", e)
-        }
+        // iOS ignores this message type (chat feature removed)
+        // Real coverage RX data comes via LOG_RX_DATA (0x88)
+        Log.d(TAG, "ChannelMsgV3 ignored (${data.size} bytes) - coverage data via LOG_RX_DATA")
     }
 
     private fun parseChannelMessage(data: ByteArray) {
@@ -557,24 +1378,103 @@ class BleManager(private val context: Context) {
     }
 
     private fun parseLogRxData(data: ByteArray) {
-        if (data.size < 10) return
+        // iOS format:
+        // [0x88][SNR*4: 1 byte signed][RSSI: 1 byte signed][header: 1 byte][pathLen: 1 byte][path: pathLen bytes][payload...]
+        if (data.size < 5) return
 
         try {
             val buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-            buffer.get() // Skip code byte
+            buffer.get() // Skip code byte (0x88)
 
-            val rssi = buffer.short.toInt()
-            val snr = buffer.get().toFloat() / 4f
+            // SNR is first (multiplied by 4), then RSSI
+            val snrRaw = buffer.get().toInt()  // Signed byte
+            val snr = snrRaw / 4.0f
+            val rssi = normalizeRssi(buffer.get().toInt())  // Signed byte
+            val header = buffer.get().toInt() and 0xFF
+            val pathLen = buffer.get().toInt() and 0xFF
 
-            log("RX", "LogRxData: $rssi dBm, SNR $snr", "green")
+            if (data.size < 5 + pathLen) return
+
+            // Parse path - EACH HOP IS 1 BYTE! (not 4 bytes)
+            // iOS: for i in 0..<pathLen { let byte = data[startIndex + i]; path.append(hex(byte)) }
+            val path = mutableListOf<String>()
+            repeat(pathLen) {
+                if (buffer.remaining() >= 1) {
+                    val hopByte = buffer.get().toInt() and 0xFF
+                    if (hopByte != 0) {  // Filter out zeros like iOS
+                        path.add("%02x".format(hopByte))
+                    }
+                }
+            }
+
+            // Only process RX with at least 1 hop (not direct reception)
+            if (path.isEmpty()) {
+                Log.d(TAG, "LogRxData: path empty (pathLen=$pathLen), skipping")
+                return
+            }
+
+            Log.d(TAG, "LogRxData: rssi=$rssi snr=$snr path=${path.joinToString("→")}")
+
+            // Create RX packet
+            val packet = RxPacket(
+                timestamp = Date(),
+                path = path,
+                rssi = rssi,
+                snr = snr
+            )
+
+            val currentPackets = _recentRxPackets.value.toMutableList()
+            currentPackets.add(0, packet)
+            if (currentPackets.size > 20) currentPackets.removeLast()
+            _recentRxPackets.value = currentPackets
+
+            _rxCount.value++
+            lastRxTime = Date()
+
+            log("RX", "${path.joinToString("→")} $rssi dBm", "green")
+
+            // Reset TX timers on RX
+            resetTxTimers()
+
+            // Create sample for upload
+            createRxSample(packet)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse LogRxData", e)
         }
     }
 
+    /**
+     * Normalize RSSI to always be negative.
+     * LoRa RSSI is always negative (typically -20 to -120 dBm).
+     * The firmware may send it as:
+     * - Signed byte: -53 comes as 0xCB = -53 (correct)
+     * - Magnitude: 53 comes as 0x35 = 53 (needs negation)
+     */
+    private fun normalizeRssi(rawValue: Int): Int {
+        return if (rawValue > 0) -rawValue else rawValue
+    }
+
     private fun parseSignature(data: ByteArray) {
-        log("RX", "Signature received", "green")
-        _isVerified.value = true
+        // Signature Response (0x14):
+        // - Byte 0: Response Code (0x14)
+        // - Bytes 1-64: signature (64 bytes Ed25519)
+        // Log.d(TAG, "DEBUG: parseSignature called with ${data.size} bytes!")
+        waitingForSignature = false
+
+        if (data.size < 65) {
+            // Log.d(TAG, "DEBUG: Signature too short: ${data.size} bytes, expected 65")
+            log("RX", "Signature incomplete (${data.size}B)", "red")
+            return
+        }
+
+        val signature = data.sliceArray(1 until 65)
+        val sigHex = signature.joinToString("") { "%02x".format(it) }
+        // Log.d(TAG, "DEBUG: SIGNATURE RECEIVED! ${data.size}B")
+        // Log.d(TAG, "DEBUG: Signature hex: $sigHex")
+        log("RX", "Signature OK!", "green")
+
+        // Verify and create server session
+        verifySignatureAndCreateSession(signature)
     }
 
     // MARK: - Samples
@@ -657,14 +1557,47 @@ class BleManager(private val context: Context) {
         _recentRxPackets.value = emptyList()
         _isTxActive.value = false
         _coverageChannelReady.value = false
+        coverageChannelIndex = 0
         _isVerified.value = false
         _sessionVerified.value = false
+        // Keep session token - it's valid for 24h even after disconnect
+        // _sessionToken = null
+        pendingChallenge = null
+        pendingSignature = null
+        maxSignDataLen = 0
+        signingInProgress = false
+        signingRetryCount = 0
+        // Note: autoReconnectCount is NOT reset here - it persists across reconnects
+        // and is only reset on successful verification
+        appStartSent = false
+        waitingForSignature = false
         lastRxTime = null
         lastTxTime = null
+        lastManualPingTime = null
+        lastManualDiscoverTime = null
     }
 
     fun setPrivacyMode(mode: String) {
+        val oldMode = _privacyMode.value
         _privacyMode.value = mode
+
+        if (mode == oldMode) return
+
+        Log.d(TAG, "Privacy mode changed to: $mode")
+
+        if (mode == "live") {
+            // Entering LIVE mode - start TX timers if channel is ready
+            if (_isConnected.value && _coverageChannelReady.value) {
+                log("TX", "Live mode - TX enabled", "green")
+                startTxTimers()
+            }
+        } else {
+            // Leaving LIVE mode - stop all TX activity
+            if (_isTxActive.value || discoverTimerJob != null) {
+                log("TX", "TX disabled ($mode mode)", "gray")
+            }
+            stopTxTimers()
+        }
     }
 
     fun incrementUploaded(count: Int) {

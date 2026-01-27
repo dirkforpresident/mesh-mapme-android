@@ -49,7 +49,7 @@ class HexService {
 
     // MARK: - Fetch Hexes
 
-    fun fetchHexes(lat: Double, lon: Double, radius: Int = 1000) {
+    fun fetchHexes(lat: Double, lon: Double, radiusKm: Double = 5.0) {
         // Don't fetch too often
         val now = System.currentTimeMillis()
         if (now - lastFetchTime < 10_000) return
@@ -66,7 +66,16 @@ class HexService {
 
         scope.launch {
             try {
-                val url = "${Constants.API_BASE_URL}/api/hexes?lat=$lat&lon=$lon&radius=$radius"
+                // Calculate bounding box (~5km radius)
+                val latDelta = radiusKm / 111.0  // 1 degree lat ≈ 111km
+                val lonDelta = radiusKm / (111.0 * Math.cos(Math.toRadians(lat)))
+
+                val minLat = lat - latDelta
+                val maxLat = lat + latDelta
+                val minLon = lon - lonDelta
+                val maxLon = lon + lonDelta
+
+                val url = "${Constants.API_BASE_URL}/api/hexes?minLat=$minLat&maxLat=$maxLat&minLon=$minLon&maxLon=$maxLon"
                 val request = Request.Builder()
                     .url(url)
                     .get()
@@ -74,8 +83,31 @@ class HexService {
 
                 client.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
-                        val body = response.body?.string() ?: "[]"
-                        val hexes = gson.fromJson(body, Array<ServerHex>::class.java).toList()
+                        val body = response.body?.string() ?: "{}"
+                        Log.d(TAG, "Hexes API response: ${body.take(200)}")
+                        val hexes = try {
+                            // Parse as JSON object with "hexes" array
+                            val jsonObject = org.json.JSONObject(body)
+                            val hexesArray = jsonObject.getJSONArray("hexes")
+                            val result = mutableListOf<ServerHex>()
+                            for (i in 0 until hexesArray.length()) {
+                                val obj = hexesArray.getJSONObject(i)
+                                result.add(ServerHex(
+                                    h = obj.getString("h"),
+                                    rssi = if (obj.isNull("rssi")) null else obj.optInt("rssi"),
+                                    n = if (obj.isNull("n")) null else obj.optInt("n"),
+                                    m = if (obj.isNull("m")) null else obj.optInt("m"),
+                                    v = if (obj.isNull("v")) null else obj.optInt("v"),
+                                    lat = if (obj.isNull("lat")) null else obj.optDouble("lat"),
+                                    lon = if (obj.isNull("lon")) null else obj.optDouble("lon"),
+                                    elev = if (obj.isNull("elev")) null else obj.optInt("elev")
+                                ))
+                            }
+                            result
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to parse hexes response: ${e.message}")
+                            emptyList()
+                        }
                         _serverHexes.value = hexes
                         Log.d(TAG, "Fetched ${hexes.size} hexes")
                     } else {
@@ -92,26 +124,98 @@ class HexService {
 
     // MARK: - Upload Samples
 
-    suspend fun uploadSamples(samples: List<Sample>): Boolean {
+    /**
+     * Upload samples to the server.
+     * Requires a verified session token from BLE signing flow.
+     *
+     * Body format:
+     * {
+     *   "d": "pubkey_hex",
+     *   "n": "node_name",
+     *   "dt": "and",  // device type: android
+     *   "hw": "hardware_model",
+     *   "freq": 869.525,  // MHz
+     *   "sf": 12,  // spreading factor
+     *   "cr": 5,   // coding rate
+     *   "samples": [{ "h", "t", "p", "r", "s", "m", "pm" }, ...]
+     * }
+     */
+    suspend fun uploadSamples(
+        samples: List<Sample>,
+        sessionToken: String?,
+        selfInfo: SelfInfo?,
+        deviceInfo: DeviceInfo?
+    ): Boolean {
         return withContext(Dispatchers.IO) {
+            if (sessionToken == null) {
+                Log.e(TAG, "Upload failed: No session token")
+                return@withContext false
+            }
+
             try {
                 val url = "${Constants.API_BASE_URL}/api/samples"
-                val jsonBody = gson.toJson(samples)
+
+                // Build request body matching iOS format
+                val pubkeyHex = selfInfo?.publicKey?.joinToString("") { "%02x".format(it) } ?: ""
+                val hardware = deviceInfo?.hardware ?: ""
+                val freqMHz = (selfInfo?.radioFreq ?: 0) / 1000.0  // Convert kHz to MHz
+
+                val bodyJson = org.json.JSONObject().apply {
+                    put("d", pubkeyHex)
+                    put("n", selfInfo?.nodeName ?: "")
+                    put("dt", "and")  // Android device type
+                    put("hw", hardware)
+                    put("freq", freqMHz)
+                    put("sf", selfInfo?.radioSf ?: 0)
+                    put("cr", selfInfo?.radioCr ?: 0)
+
+                    val samplesArray = org.json.JSONArray()
+                    samples.forEach { sample ->
+                        val sampleJson = org.json.JSONObject().apply {
+                            put("h", sample.h3)
+                            put("t", sample.timestamp)
+                            put("p", org.json.JSONArray(sample.path))
+                            // Mode: "rx" for RX with RSSI, "tx" for TX, "v" for visit
+                            put("m", when (sample.type) {
+                                "rx" -> "rx"
+                                "tx" -> "tx"
+                                else -> "v"  // visit
+                            })
+                            put("pm", sample.privacyMode)
+                            // Only include RSSI if present and valid (-160 to 0)
+                            sample.rssi?.let { rssi ->
+                                if (rssi in -160..0) {
+                                    put("r", rssi)
+                                }
+                            }
+                            // SNR as integer
+                            sample.snr?.let { snr ->
+                                put("s", snr.toInt())
+                            }
+                        }
+                        samplesArray.put(sampleJson)
+                    }
+                    put("samples", samplesArray)
+                }
 
                 val request = Request.Builder()
                     .url(url)
-                    .post(jsonBody.toRequestBody("application/json".toMediaType()))
-                    .addHeader("X-App-Version", Constants.APP_VERSION)
-                    .addHeader("X-Build", Constants.DEBUG_BUILD.toString())
-                    .addHeader("X-Platform", "android")
+                    .post(bodyJson.toString().toRequestBody("application/json".toMediaType()))
+                    .addHeader("X-Session-Token", sessionToken)
                     .build()
 
                 client.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
-                        Log.d(TAG, "Uploaded ${samples.size} samples")
+                        val responseBody = response.body?.string() ?: "{}"
+                        val responseJson = org.json.JSONObject(responseBody)
+                        val inserted = responseJson.optInt("inserted", 0)
+                        Log.d(TAG, "Uploaded ${samples.size} samples, inserted: $inserted")
                         true
                     } else {
                         Log.e(TAG, "Upload failed: ${response.code}")
+                        if (response.code == 403) {
+                            Log.e(TAG, "Session not verified - need to re-verify")
+                        }
                         false
                     }
                 }
@@ -127,7 +231,7 @@ class HexService {
     fun fetchLiveMappers() {
         scope.launch {
             try {
-                val url = "${Constants.API_BASE_URL}/api/live-mappers"
+                val url = "${Constants.API_BASE_URL}/api/online"
                 val request = Request.Builder()
                     .url(url)
                     .get()
@@ -135,8 +239,19 @@ class HexService {
 
                 client.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
-                        val body = response.body?.string() ?: "[]"
-                        val mappers = gson.fromJson(body, Array<LiveMapper>::class.java).toList()
+                        val body = response.body?.string() ?: "{}"
+                        val mappers = try {
+                            // Try parsing as wrapped response first
+                            val wrapped = gson.fromJson(body, LiveMappersResponse::class.java)
+                            wrapped.mappers ?: emptyList()
+                        } catch (e: Exception) {
+                            // Fallback to direct array
+                            try {
+                                gson.fromJson(body, Array<LiveMapper>::class.java).toList()
+                            } catch (e2: Exception) {
+                                emptyList()
+                            }
+                        }
                         _liveMappers.value = mappers
                         Log.d(TAG, "Fetched ${mappers.size} live mappers")
                     }
@@ -160,8 +275,19 @@ class HexService {
 
                 client.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
-                        val body = response.body?.string() ?: "[]"
-                        val entries = gson.fromJson(body, Array<LeaderboardEntry>::class.java).toList()
+                        val body = response.body?.string() ?: "{}"
+                        val entries = try {
+                            // Try parsing as wrapped response first
+                            val wrapped = gson.fromJson(body, LeaderboardResponse::class.java)
+                            wrapped.leaderboard ?: emptyList()
+                        } catch (e: Exception) {
+                            // Fallback to direct array
+                            try {
+                                gson.fromJson(body, Array<LeaderboardEntry>::class.java).toList()
+                            } catch (e2: Exception) {
+                                emptyList()
+                            }
+                        }
                         _leaderboard.value = entries
                         Log.d(TAG, "Fetched ${entries.size} leaderboard entries")
                     }
@@ -223,33 +349,64 @@ class HexService {
 
 data class ServerHex(
     @SerializedName("h") val h: String,
-    @SerializedName("color") val color: HexColor,
     @SerializedName("rssi") val rssi: Int? = null,
-    @SerializedName("count") val count: Int? = null
-)
+    @SerializedName("n") val n: Int? = null,       // Node count
+    @SerializedName("m") val m: Int? = null,       // Mapper count
+    @SerializedName("v") val v: Int? = null,       // Visit count
+    @SerializedName("lat") val lat: Double? = null,
+    @SerializedName("lon") val lon: Double? = null,
+    @SerializedName("elev") val elev: Int? = null
+) {
+    // Generate color based on RSSI or visit status
+    fun getColor(): HexColor {
+        return when {
+            rssi != null && rssi > -80 -> HexColor.GOOD_SIGNAL
+            rssi != null -> HexColor.WEAK_SIGNAL
+            v != null && v > 0 -> HexColor.VISITED
+            else -> HexColor.DEFAULT
+        }
+    }
+}
 
 data class HexColor(
-    @SerializedName("r") val r: Float,
-    @SerializedName("g") val g: Float,
-    @SerializedName("b") val b: Float
+    val r: Float,
+    val g: Float,
+    val b: Float
 ) {
     companion object {
-        val VISITED = HexColor(0.23f, 0.51f, 0.97f) // Blue
-        val SIGNAL = HexColor(0.13f, 0.77f, 0.37f)  // Green
+        val VISITED = HexColor(0.23f, 0.51f, 0.97f)     // Blue
+        val GOOD_SIGNAL = HexColor(0.13f, 0.77f, 0.37f) // Green
+        val WEAK_SIGNAL = HexColor(0.95f, 0.77f, 0.06f) // Yellow
+        val DEFAULT = HexColor(0.5f, 0.5f, 0.5f)        // Gray
     }
 }
 
 data class LiveMapper(
-    @SerializedName("id") val id: String,
+    @SerializedName("pubkey") val id: String,
     @SerializedName("name") val name: String? = null,
-    @SerializedName("hexes") val hexes: Int = 0,
-    @SerializedName("lastSeen") val lastSeen: Long? = null
+    @SerializedName("ago") val ago: Int = 0,  // Minutes since last seen
+    @SerializedName("hex") val hex: String? = null
 )
 
 data class LeaderboardEntry(
     @SerializedName("rank") val rank: Int,
-    @SerializedName("id") val id: String,
+    @SerializedName("pubkey") val id: String,
     @SerializedName("name") val name: String? = null,
-    @SerializedName("hexes") val hexes: Int,
-    @SerializedName("uploads") val uploads: Int
+    @SerializedName("points") val hexes: Int = 0,
+    @SerializedName("days") val days: Int = 0,
+    @SerializedName("online") val online: Boolean = false
+)
+
+// Wrapper classes for API responses
+data class LeaderboardResponse(
+    @SerializedName("leaderboard") val leaderboard: List<LeaderboardEntry>? = null
+)
+
+data class LiveMappersResponse(
+    @SerializedName("count") val count: Int = 0,
+    @SerializedName("mappers") val mappers: List<LiveMapper>? = null
+)
+
+data class HexesResponse(
+    @SerializedName("hexes") val hexes: List<ServerHex>? = null
 )

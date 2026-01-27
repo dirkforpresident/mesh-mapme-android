@@ -16,11 +16,6 @@
     <!-- Network -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Foreground Service for background tracking -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
-
     <!-- BLE Feature -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
@@ -34,11 +29,6 @@
         android:theme="@style/Theme.MapmeMapper"
         tools:targetApi="34">
 
-        <!-- Google Maps API Key (from secrets) -->
-        <meta-data
-            android:name="com.google.android.geo.API_KEY"
-            android:value="${MAPS_API_KEY}" />
-
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -49,12 +39,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- Foreground Service for BLE + Location -->
-        <service
-            android:name=".service.MappingService"
-            android:foregroundServiceType="location|connectedDevice"
-            android:exported="false" />
 
     </application>
 

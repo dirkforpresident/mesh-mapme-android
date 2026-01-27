@@ -160,7 +160,7 @@ fun HomeScreen(
                                     )
                                 }
                                 Text(
-                                    text = "${mapper.hexes} hexes",
+                                    text = if (mapper.ago < 60) "${mapper.ago}m ago" else "${mapper.ago / 60}h ago",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -195,7 +195,7 @@ fun HomeScreen(
                                     .padding(vertical = 4.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Row {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         text = "#${entry.rank}",
                                         style = MaterialTheme.typography.bodyMedium,
@@ -207,14 +207,22 @@ fun HomeScreen(
                                             else -> MaterialTheme.colorScheme.onSurface
                                         }
                                     )
-                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    if (entry.online) {
+                                        Surface(
+                                            modifier = Modifier.size(6.dp),
+                                            shape = MaterialTheme.shapes.small,
+                                            color = MaterialTheme.colorScheme.primary
+                                        ) {}
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                    }
                                     Text(
                                         text = entry.name ?: entry.id.take(8),
                                         style = MaterialTheme.typography.bodyMedium
                                     )
                                 }
                                 Text(
-                                    text = "${entry.hexes}",
+                                    text = "${entry.hexes} pts",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold
                                 )

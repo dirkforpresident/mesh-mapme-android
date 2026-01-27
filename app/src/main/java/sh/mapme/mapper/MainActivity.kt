@@ -3,9 +3,17 @@ package sh.mapme.mapper
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.*
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -21,6 +29,7 @@ import sh.mapme.mapper.ui.map.MapScreen
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContent {
             MapmeMapperTheme {
                 MainApp()
@@ -29,6 +38,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainApp() {
     val navController = rememberNavController()
@@ -43,10 +53,13 @@ fun MainApp() {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                modifier = Modifier
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+            ) {
                 NavigationBarItem(
-                    icon = { Icon(painterResource(R.drawable.ic_home), contentDescription = "Home") },
-                    label = { Text("Home") },
+                    icon = { Icon(painterResource(R.drawable.ic_home), contentDescription = "Home", modifier = Modifier.size(22.dp)) },
+                    label = { Text("Home", fontSize = 12.sp) },
                     selected = selectedTab == 0,
                     onClick = {
                         selectedTab = 0
@@ -64,10 +77,10 @@ fun MainApp() {
                                 }
                             }
                         ) {
-                            Icon(painterResource(R.drawable.ic_device), contentDescription = "Device")
+                            Icon(painterResource(R.drawable.ic_device), contentDescription = "Device", modifier = Modifier.size(22.dp))
                         }
                     },
-                    label = { Text("Device") },
+                    label = { Text("Device", fontSize = 12.sp) },
                     selected = selectedTab == 1,
                     onClick = {
                         selectedTab = 1
@@ -77,8 +90,8 @@ fun MainApp() {
                     }
                 )
                 NavigationBarItem(
-                    icon = { Icon(painterResource(R.drawable.ic_map), contentDescription = "Map") },
-                    label = { Text("Map") },
+                    icon = { Icon(painterResource(R.drawable.ic_map), contentDescription = "Map", modifier = Modifier.size(22.dp)) },
+                    label = { Text("Map", fontSize = 12.sp) },
                     selected = selectedTab == 2,
                     onClick = {
                         selectedTab = 2
