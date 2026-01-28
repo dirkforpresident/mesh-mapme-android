@@ -31,6 +31,8 @@ class MainViewModel : ViewModel() {
     val privacyMode = bleManager.privacyMode
     val selfInfo = bleManager.selfInfo
     val deviceInfo = bleManager.deviceInfo
+    val batteryPercent = bleManager.batteryPercent
+    val batteryMillivolts = bleManager.batteryMillivolts
     val debugLog = bleManager.debugLog
     val isTxActive = bleManager.isTxActive
     val coverageChannelReady = bleManager.coverageChannelReady

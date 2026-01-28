@@ -80,6 +80,15 @@ class BleManager(private val context: Context) {
     private val _deviceInfo = MutableStateFlow<DeviceInfo?>(null)
     val deviceInfo: StateFlow<DeviceInfo?> = _deviceInfo.asStateFlow()
 
+    // Battery state
+    private val _batteryPercent = MutableStateFlow(0)
+    val batteryPercent: StateFlow<Int> = _batteryPercent.asStateFlow()
+
+    private val _batteryMillivolts = MutableStateFlow(0)
+    val batteryMillivolts: StateFlow<Int> = _batteryMillivolts.asStateFlow()
+
+    private var batteryTimerJob: Job? = null
+
     private val _isVerified = MutableStateFlow(false)
     val isVerified: StateFlow<Boolean> = _isVerified.asStateFlow()
 
@@ -246,6 +255,7 @@ class BleManager(private val context: Context) {
     fun disconnect() {
         // Stop all timers
         stopTxTimers()
+        stopBatteryTimer()
         mtuTimeoutJob?.cancel()
         mtuTimeoutJob = null
 
@@ -264,6 +274,8 @@ class BleManager(private val context: Context) {
         _connectedDeviceName.value = null
         _selfInfo.value = null
         _deviceInfo.value = null
+        _batteryPercent.value = 0
+        _batteryMillivolts.value = 0
         resetSessionStats()
         isFirstConnect = true  // Reset for next connection
 
@@ -705,6 +717,13 @@ class BleManager(private val context: Context) {
         pendingSignature = signature
         signingInProgress = false  // Signing flow complete
         log("RX", "Device signed", "green")
+        feedbackManager?.playConnected()
+
+        // Start battery monitoring
+        scope.launch {
+            delay(500)
+            startBatteryTimer()
+        }
 
         // Now call server to create session
         createServerSession(pubKeyHex, challenge, signatureHex)
@@ -783,7 +802,18 @@ class BleManager(private val context: Context) {
     }
 
     fun sendDiscover() {
-        sendCommand(CommandCode.REPEATERS_REQUEST)
+        // CMD_SEND_CONTROL_DATA (55) with DISCOVER_REQ (0x80)
+        // Format: [55][0x80][filter=4][0xDEADBEEF LE]
+        val payload = byteArrayOf(
+            0x80.toByte(),  // DISCOVER_REQ
+            4,              // filter = REPEATER
+            0xEF.toByte(),  // 0xDEADBEEF in Little Endian
+            0xBE.toByte(),
+            0xAD.toByte(),
+            0xDE.toByte()
+        )
+        sendCommand(CommandCode.SEND_CONTROL_DATA, payload)
+        Log.d(TAG, "Discover sent: ${(byteArrayOf(CommandCode.SEND_CONTROL_DATA.value) + payload).toHexString()}")
         log("TX", "Discover", "blue")
     }
 
@@ -860,14 +890,25 @@ class BleManager(private val context: Context) {
     }
 
     private fun sendChannelMessage(channelIdx: Int, message: String) {
-        // SendChannelTxtMsg: [0x03][channelIdx: 1 byte][message bytes...]
+        // SendChannelTxtMsg: [0x03][txtType: 1B][channelIdx: 1B][timestamp: 4B LE][message]
+        // This matches the connect.html reference implementation
         Log.d(TAG, "sendChannelMessage(idx=$channelIdx, msg=$message)")
         if (!_coverageChannelReady.value) {
             Log.e(TAG, "BLOCKED: coverage channel not ready!")
             log("TX", "Channel not ready", "red")
             return
         }
-        val payload = byteArrayOf(channelIdx.toByte()) + message.toByteArray()
+
+        // Build payload: [txtType][channelIdx][timestamp 4B LE][message]
+        val timestamp = (System.currentTimeMillis() / 1000).toInt()
+        val payload = ByteBuffer.allocate(1 + 1 + 4 + message.length)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .put(0.toByte())  // txtType = 0 (Plain)
+            .put(channelIdx.toByte())
+            .putInt(timestamp)
+            .put(message.toByteArray())
+            .array()
+
         val fullCommand = byteArrayOf(CommandCode.SEND_CHANNEL_TXT_MSG.value) + payload
         Log.d(TAG, "TX bytes: ${fullCommand.toHexString()}")
         sendCommand(CommandCode.SEND_CHANNEL_TXT_MSG, payload)
@@ -961,7 +1002,8 @@ class BleManager(private val context: Context) {
         discoverTimerJob = null
 
         _isTxActive.value = true
-        log("TX", "TX Mode started (5min idle)", "orange")
+        log("TX", "TX Mode started (3min idle)", "orange")
+        feedbackManager?.playTxModeStarted()
         Log.d(TAG, "Starting coverage channel TX")
 
         // Send first message immediately
@@ -1268,6 +1310,7 @@ class BleManager(private val context: Context) {
             ResponseCode.CHANNEL_MSG_RECV -> parseChannelMessage(data)
             ResponseCode.SIGNATURE_READY -> parseSignatureReady(data)
             ResponseCode.SIGNATURE -> parseSignature(data)
+            ResponseCode.BATTERY_AND_STORAGE -> parseBatteryResponse(data)
             else -> log("RX", "Response: $code", "gray")
         }
     }
@@ -1278,6 +1321,7 @@ class BleManager(private val context: Context) {
         when (code) {
             PushCode.ADVERT, PushCode.NEW_ADVERT -> parseAdvert(data)
             PushCode.LOG_RX_DATA -> parseLogRxData(data)
+            PushCode.DISCOVER_REPLY -> parseDiscoverReply(data)
             PushCode.MSG_WAITING -> {
                 log("RX", "Message waiting", "blue")
                 // Request the message
@@ -1785,6 +1829,101 @@ class BleManager(private val context: Context) {
 
         // Verify and create server session
         verifySignatureAndCreateSession(signature)
+    }
+
+    // MARK: - Battery
+
+    private fun parseBatteryResponse(data: ByteArray) {
+        // Format:
+        // [0] code (12)
+        // [1-2] battery_millivolts (uint16 LE)
+        // [3-6] storage_used_kb (uint32 LE)
+        // [7-10] storage_total_kb (uint32 LE)
+        if (data.size < 11) return
+
+        val buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+        buffer.get() // Skip code
+        val batteryMv = buffer.short.toInt() and 0xFFFF
+        val storageUsedKb = buffer.int
+        val storageTotalKb = buffer.int
+
+        // Calculate percentage: 3200mV = 0%, 4200mV = 100%
+        val minMv = 3200
+        val maxMv = 4200
+        var percent = ((batteryMv - minMv) * 100) / (maxMv - minMv)
+        percent = percent.coerceIn(0, 100)
+
+        Log.d(TAG, "BATTERY: ${batteryMv}mV = $percent% | Storage: $storageUsedKb/$storageTotalKb KB")
+
+        _batteryMillivolts.value = batteryMv
+        _batteryPercent.value = percent
+    }
+
+    fun sendBatteryRequest() {
+        sendCommand(CommandCode.GET_BATTERY_AND_STORAGE)
+        Log.d(TAG, "Battery request sent")
+    }
+
+    private fun startBatteryTimer() {
+        batteryTimerJob?.cancel()
+        // Request immediately
+        sendBatteryRequest()
+        // Then every 60 seconds
+        batteryTimerJob = scope.launch {
+            while (isActive) {
+                delay(60_000)
+                if (_isConnected.value) {
+                    sendBatteryRequest()
+                }
+            }
+        }
+    }
+
+    private fun stopBatteryTimer() {
+        batteryTimerJob?.cancel()
+        batteryTimerJob = null
+    }
+
+    // MARK: - Discover Reply
+
+    private fun parseDiscoverReply(data: ByteArray) {
+        // Format (from connect.html):
+        // [0x8E][RSSI: 1 byte signed][SNR: 1 byte signed][...][pubkey: 32 bytes at offset 10-41]
+        Log.d(TAG, "Discover reply received (${data.size} bytes)")
+
+        if (data.size < 42) {
+            Log.d(TAG, "Discover reply too short: ${data.size} bytes")
+            return
+        }
+
+        // Parse RSSI and SNR (signed bytes)
+        val rssiRaw = data[1].toInt()
+        val rssi = if (rssiRaw > 127) rssiRaw - 256 else -rssiRaw
+        val snrRaw = data[2].toInt()
+        val snr = if (snrRaw > 127) snrRaw - 256 else snrRaw
+
+        // Parse pubkey (bytes 10-41)
+        val pubkeyBytes = data.sliceArray(10 until 42)
+        val pubkeyHex = pubkeyBytes.joinToString("") { "%02x".format(it) }
+        val shortId = pubkeyHex.take(4)
+
+        Log.d(TAG, "Repeater found: $shortId RSSI=${rssi}dBm SNR=${snr}dB")
+        log("RX", "Repeater $shortId (${rssi}dBm, ${snr}dB)", "green")
+        feedbackManager?.playDiscoverReply()
+
+        // Add sample for upload
+        currentH3?.let { h3 ->
+            val sample = Sample(
+                type = "rx",
+                h3 = h3,
+                rssi = rssi,
+                snr = snr.toFloat(),
+                path = listOf(shortId),
+                timestamp = System.currentTimeMillis(),
+                privacyMode = _privacyMode.value
+            )
+            sampleRepository?.addSample(sample)
+        }
     }
 
     // MARK: - Samples

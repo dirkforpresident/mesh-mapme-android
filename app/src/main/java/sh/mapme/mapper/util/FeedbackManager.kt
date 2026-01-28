@@ -104,6 +104,30 @@ class FeedbackManager(private val context: Context) {
     }
 
     /**
+     * Play TX mode started feedback - warning descending tones
+     */
+    fun playTxModeStarted() {
+        if (soundEnabled) {
+            scope.launch {
+                playTone(880f, 880f, 150)
+                delay(180)
+                playTone(660f, 660f, 150)
+            }
+        }
+        vibrate(100)
+    }
+
+    /**
+     * Play discover reply feedback - repeater found
+     */
+    fun playDiscoverReply() {
+        if (soundEnabled) {
+            scope.launch { playTone(1000f, 1000f, 80) }
+        }
+        vibrate(75)
+    }
+
+    /**
      * Vibrate for specified duration
      */
     fun vibrate(durationMs: Long) {

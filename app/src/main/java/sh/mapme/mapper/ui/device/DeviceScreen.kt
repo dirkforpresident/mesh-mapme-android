@@ -273,6 +273,8 @@ fun ConnectedScreen(viewModel: MainViewModel) {
     val sessionVerified by viewModel.sessionVerified.collectAsState()
     val isTxActive by viewModel.isTxActive.collectAsState()
     val coverageChannelReady by viewModel.coverageChannelReady.collectAsState()
+    val batteryPercent by viewModel.batteryPercent.collectAsState()
+    val batteryMillivolts by viewModel.batteryMillivolts.collectAsState()
 
     var showDetails by remember { mutableStateOf(false) }
     var showActivityLog by remember { mutableStateOf(false) }
@@ -344,6 +346,38 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                                             MaterialTheme.colorScheme.errorContainer
                                     )
                                 )
+                                // Battery chip
+                                if (batteryPercent > 0) {
+                                    AssistChip(
+                                        onClick = {},
+                                        label = {
+                                            Text(
+                                                "$batteryPercent%",
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                painter = painterResource(
+                                                    when {
+                                                        batteryPercent <= 10 -> R.drawable.ic_device // Use available icon
+                                                        batteryPercent <= 25 -> R.drawable.ic_device
+                                                        else -> R.drawable.ic_device
+                                                    }
+                                                ),
+                                                contentDescription = "Battery",
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        },
+                                        colors = AssistChipDefaults.assistChipColors(
+                                            containerColor = when {
+                                                batteryPercent <= 10 -> MaterialTheme.colorScheme.errorContainer
+                                                batteryPercent <= 25 -> MaterialTheme.colorScheme.tertiaryContainer
+                                                else -> MaterialTheme.colorScheme.secondaryContainer
+                                            }
+                                        )
+                                    )
+                                }
                             }
                         }
 
@@ -372,6 +406,11 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                             if (info.hardware.isNotEmpty()) {
                                 DetailRow("Hardware", info.hardware)
                             }
+                        }
+
+                        // Battery info
+                        if (batteryPercent > 0) {
+                            DetailRow("Battery", "$batteryPercent% (${batteryMillivolts}mV)")
                         }
                     }
                 }
