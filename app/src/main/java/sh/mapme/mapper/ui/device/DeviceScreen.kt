@@ -363,6 +363,21 @@ fun ConnectedScreen(viewModel: MainViewModel) {
             }
         }
 
+        // START Button (when not verified)
+        if (!sessionVerified) {
+            item {
+                Button(
+                    onClick = { viewModel.startVerification() },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Text("START", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
         // Disconnect Button (always visible)
         item {
             OutlinedButton(

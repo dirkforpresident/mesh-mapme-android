@@ -79,6 +79,7 @@ class MainViewModel : ViewModel() {
     fun setPrivacyMode(mode: String) = bleManager.setPrivacyMode(mode)
     fun getDiscoverCooldown() = bleManager.manualDiscoverCooldownRemaining
     fun getPingCooldown() = bleManager.manualPingCooldownRemaining
+    fun startVerification() = bleManager.startVerification()
 
     // MARK: - Location Actions
 

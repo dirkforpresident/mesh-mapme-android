@@ -449,6 +449,37 @@ class BleManager(private val context: Context) {
 
     // MARK: - Signing Flow
 
+    /**
+     * Manually trigger verification flow.
+     * Call this after connect when user presses START button.
+     */
+    fun startVerification() {
+        Log.d(TAG, "=== MANUAL VERIFICATION START ===")
+        if (!_isConnected.value) {
+            Log.e(TAG, "Cannot verify - not connected")
+            log("BLE", "Not connected", "red")
+            return
+        }
+        if (_selfInfo.value == null) {
+            Log.e(TAG, "Cannot verify - no SelfInfo yet, sending AppStart")
+            log("BLE", "Initializing...", "blue")
+            // Send AppStart first, signing will start after SelfInfo received
+            appStartSent = false
+            sendAppStart()
+            return
+        }
+        if (_isVerified.value && _sessionVerified.value) {
+            Log.d(TAG, "Already verified")
+            log("BLE", "Already verified", "green")
+            return
+        }
+        // Reset counters for fresh attempt
+        signingRetryCount = 0
+        autoReconnectCount = 0
+        signingInProgress = false
+        startSigningFlow()
+    }
+
     private fun startSigningFlow() {
         // Prevent duplicate signing flows
         if (signingInProgress) return
