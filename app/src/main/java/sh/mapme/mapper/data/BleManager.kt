@@ -216,7 +216,10 @@ class BleManager(private val context: Context) {
         stopScanning()
         lastConnectedDevice = device
         log("BLE", "Connecting to ${device.name ?: device.address}...", "blue")
+        connectInternal(device)
+    }
 
+    private fun connectInternal(device: BluetoothDevice) {
         bluetoothGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
     }
 
@@ -373,7 +376,7 @@ class BleManager(private val context: Context) {
 
                             // Reconnect (this is now the "second" connect)
                             log("BLE", "Reconnecting...", "blue")
-                            bluetoothGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                            connectInternal(device)
                         }
                     }
                 } else {
