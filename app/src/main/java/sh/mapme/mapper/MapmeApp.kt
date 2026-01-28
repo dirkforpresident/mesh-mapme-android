@@ -2,6 +2,7 @@ package sh.mapme.mapper
 
 import android.app.Application
 import sh.mapme.mapper.data.*
+import sh.mapme.mapper.util.FeedbackManager
 
 /**
  * MapmeApp - Application class that initializes all services
@@ -21,15 +22,22 @@ class MapmeApp : Application() {
     lateinit var hexService: HexService
         private set
 
+    lateinit var feedbackManager: FeedbackManager
+        private set
+
     override fun onCreate() {
         super.onCreate()
         instance = this
 
         // Initialize services
+        feedbackManager = FeedbackManager(this)
         hexService = HexService()
         sampleRepository = SampleRepository(this)
         bleManager = BleManager(this)
         locationService = LocationService(this)
+
+        // Wire feedback to BLE manager
+        bleManager.feedbackManager = feedbackManager
 
         // Wire up dependencies
         sampleRepository.hexService = hexService
@@ -55,6 +63,7 @@ class MapmeApp : Application() {
         locationService.cleanup()
         sampleRepository.cleanup()
         hexService.cleanup()
+        feedbackManager.destroy()
     }
 
     companion object {

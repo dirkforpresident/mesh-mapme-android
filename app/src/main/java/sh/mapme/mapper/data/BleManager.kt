@@ -11,6 +11,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import sh.mapme.mapper.*
 import sh.mapme.mapper.service.MapperService
+import sh.mapme.mapper.util.FeedbackManager
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.*
@@ -153,6 +154,9 @@ class BleManager(private val context: Context) {
 
     // Sample store reference
     var sampleRepository: SampleRepository? = null
+
+    // Feedback manager for audio/haptic feedback
+    var feedbackManager: FeedbackManager? = null
 
     // RX buffer for fragmented messages
     private var rxBuffer = ByteArray(0)
@@ -747,6 +751,7 @@ class BleManager(private val context: Context) {
                         if (verified) {
                             autoReconnectCount = 0  // Reset on successful verification
                             log("RX", "Session verified!", "green")
+                            feedbackManager?.playConnected()
                         } else {
                             log("RX", "Session unverified", "orange")
                         }
@@ -864,6 +869,7 @@ class BleManager(private val context: Context) {
         Log.d(TAG, "TX bytes: ${fullCommand.toHexString()}")
         sendCommand(CommandCode.SEND_CHANNEL_TXT_MSG, payload)
         Log.d(TAG, "Channel message sent OK (idx: $channelIdx, ${fullCommand.size} bytes)")
+        feedbackManager?.playTx()
 
         // Start waiting for TX confirmation (our message bounced back from repeater)
         pendingTx = true
@@ -1622,6 +1628,7 @@ class BleManager(private val context: Context) {
                 val repeater = path.last()  // Last hop is the repeater that sent it back
                 Log.d(TAG, "=== TX CONFIRMED by repeater $repeater @ $rssi dBm ===")
                 log("TX", "✓ via $repeater ($rssi dBm)", "green")
+                feedbackManager?.playTxConfirm()
             }
 
             // Check if payload is an Advert (min 101 bytes: 32 pubkey + 4 timestamp + 64 sig + 1 flags)
@@ -1646,6 +1653,7 @@ class BleManager(private val context: Context) {
             lastRxTime = Date()
 
             log("RX", "${path.joinToString("→")} $rssi dBm", "green")
+            feedbackManager?.playRx()
 
             // Reset TX timers on RX
             resetTxTimers()
@@ -1714,6 +1722,7 @@ class BleManager(private val context: Context) {
             // Log repeater discovery - make it visible!
             if (nodeType == 2) {
                 log("RX", "📡 Repeater: $displayName ($rssi dBm)", "green")
+                feedbackManager?.playAdvert()
             } else {
                 log("RX", "$typeName: $displayName ($rssi dBm)", "blue")
             }

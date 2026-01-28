@@ -21,6 +21,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Feedback -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <!-- BLE Feature -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
