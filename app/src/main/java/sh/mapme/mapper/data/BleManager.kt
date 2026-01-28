@@ -346,46 +346,11 @@ class BleManager(private val context: Context) {
             Log.d(TAG, "onDescriptorWrite called, status=$status, descriptor=${descriptor.uuid}")
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 log("BLE", "Notifications enabled", "green")
-
-                // Auto double-connect for better verification
-                if (isFirstConnect) {
-                    isFirstConnect = false
-                    scope.launch {
-                        Log.d(TAG, "First connect - will auto-reconnect for verification")
-                        log("BLE", "Preparing verify...", "blue")
-
-                        // Send AppStart to wake up device
-                        delay(200)
-                        sendAppStart()
-
-                        // Wait a moment then reconnect
-                        delay(1500)
-                        Log.d(TAG, "Auto-reconnecting for verification...")
-
-                        val device = lastConnectedDevice
-                        if (device != null) {
-                            // Quick disconnect
-                            bluetoothGatt?.disconnect()
-                            bluetoothGatt?.close()
-                            bluetoothGatt = null
-                            rxCharacteristic = null
-                            txCharacteristic = null
-                            appStartSent = false
-
-                            delay(500)
-
-                            // Reconnect (this is now the "second" connect)
-                            log("BLE", "Reconnecting...", "blue")
-                            connectInternal(device)
-                        }
-                    }
-                } else {
-                    // Second connect - normal flow with signing
-                    scope.launch {
-                        delay(200)
-                        Log.d(TAG, "Second connect - sending AppStart for signing...")
-                        sendAppStart()
-                    }
+                // Send AppStart after notifications are set up
+                scope.launch {
+                    delay(200)
+                    Log.d(TAG, "Sending AppStart after descriptor write...")
+                    sendAppStart()
                 }
             } else {
                 Log.e(TAG, "Descriptor write FAILED with status: $status")
