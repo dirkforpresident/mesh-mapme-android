@@ -234,6 +234,8 @@ class BleManager(private val context: Context) {
     fun disconnect() {
         // Stop all timers
         stopTxTimers()
+        mtuTimeoutJob?.cancel()
+        mtuTimeoutJob = null
 
         // Clear write queue
         synchronized(writeQueue) {
@@ -257,6 +259,8 @@ class BleManager(private val context: Context) {
 
     // Current MTU (default is 23, but we request higher)
     private var currentMtu: Int = 23
+    private var mtuTimeoutJob: Job? = null
+    private var serviceDiscoveryStarted = false
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -265,10 +269,24 @@ class BleManager(private val context: Context) {
                     Log.d(TAG, "Connected to GATT server")
                     _isConnected.value = true
                     _connectedDeviceName.value = gatt.device.name ?: gatt.device.address
+                    serviceDiscoveryStarted = false
+
                     // Request larger MTU before service discovery (important for SignData!)
                     Log.d(TAG, "Requesting MTU 128...")
                     gatt.requestMtu(128)
                     log("BLE", "Connected!", "green")
+
+                    // Fallback: if onMtuChanged doesn't fire within 2s, start service discovery anyway
+                    mtuTimeoutJob?.cancel()
+                    mtuTimeoutJob = scope.launch {
+                        delay(2000)
+                        if (!serviceDiscoveryStarted && _isConnected.value) {
+                            Log.w(TAG, "MTU callback timeout - starting service discovery anyway")
+                            log("BLE", "MTU timeout, discovering...", "orange")
+                            serviceDiscoveryStarted = true
+                            gatt.discoverServices()
+                        }
+                    }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.d(TAG, "Disconnected from GATT server")
@@ -280,6 +298,10 @@ class BleManager(private val context: Context) {
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            // Cancel the fallback timeout
+            mtuTimeoutJob?.cancel()
+            mtuTimeoutJob = null
+
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 currentMtu = mtu
                 Log.d(TAG, "MTU changed to $mtu bytes")
@@ -287,8 +309,12 @@ class BleManager(private val context: Context) {
             } else {
                 Log.w(TAG, "MTU request failed with status $status, using default")
             }
+
             // Discover services after MTU negotiation
-            gatt.discoverServices()
+            if (!serviceDiscoveryStarted) {
+                serviceDiscoveryStarted = true
+                gatt.discoverServices()
+            }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
