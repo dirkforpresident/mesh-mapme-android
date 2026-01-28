@@ -1628,19 +1628,25 @@ class BleManager(private val context: Context) {
 
             // Check if this is our TX bounced back from a repeater (GRP_TXT = 0x05)
             // Decrypt the payload and verify it contains our signature
-            if (pendingTx && payloadType == 0x05 && path.isNotEmpty() && payload.isNotEmpty()) {
-                if (verifyTxResponse(payload)) {
-                    pendingTx = false
-                    pendingTxTimeout?.cancel()
-                    val repeater = path.last()  // Last hop is the repeater that sent it back
-                    Log.d(TAG, "=== TX CONFIRMED by repeater $repeater @ $rssi dBm ===")
-                    log("TX", "✓ via $repeater ($rssi dBm)", "green")
-                    feedbackManager?.playTxConfirm()
+            if (payloadType == 0x05 && payload.isNotEmpty()) {
+                Log.d(TAG, "GRP_TXT received! pendingTx=$pendingTx path=$path payload=${payload.size}B")
+                if (pendingTx && path.isNotEmpty()) {
+                    val verified = verifyTxResponse(payload)
+                    Log.d(TAG, "TX verification result: $verified")
+                    if (verified) {
+                        pendingTx = false
+                        pendingTxTimeout?.cancel()
+                        val repeater = path.last()  // Last hop is the repeater that sent it back
+                        Log.d(TAG, "=== TX CONFIRMED by repeater $repeater @ $rssi dBm ===")
+                        log("TX", "✓ via $repeater ($rssi dBm)", "green")
+                        feedbackManager?.playTxConfirm()
+                    }
                 }
             }
 
-            // Check if payload is an Advert (min 101 bytes: 32 pubkey + 4 timestamp + 64 sig + 1 flags)
-            if (payload.size >= 101) {
+            // Check if payload is an Advert (payloadType 0x00 or 0x01, min 101 bytes)
+            // Only parse as advert if it's NOT a GRP_TXT and has the right size
+            if (payloadType != 0x05 && payload.size >= 101) {
                 parseAdvertFromPayload(payload, rssi, path)
             }
 
@@ -1660,7 +1666,13 @@ class BleManager(private val context: Context) {
             _rxCount.value++
             lastRxTime = Date()
 
-            log("RX", "${path.joinToString("→")} $rssi dBm", "green")
+            // Show payload type in activity log for debugging
+            val typeLabel = when (payloadType) {
+                0x05 -> "TXT"
+                0x00, 0x01 -> "ADV"
+                else -> "T$payloadType"
+            }
+            log("RX", "$typeLabel ${path.joinToString("→")} $rssi dBm", "green")
             feedbackManager?.playRx()
 
             // Reset TX timers on RX
