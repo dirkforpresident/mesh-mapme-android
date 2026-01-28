@@ -23,6 +23,7 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Polygon
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
+import android.view.MotionEvent
 import sh.mapme.mapper.MainViewModel
 import sh.mapme.mapper.MapmeApp
 import java.io.File
@@ -45,6 +46,7 @@ fun MapScreen(
     var showStats by remember { mutableStateOf(true) }
     var useDarkMap by remember { mutableStateOf(true) }
     var showActivityFeed by remember { mutableStateOf(false) }
+    var followLocation by remember { mutableStateOf(true) }
 
     // Location permission
     val locationPermissions = rememberMultiplePermissionsState(
@@ -141,13 +143,17 @@ fun MapScreen(
         mapView.invalidate()
     }
 
-    // Center map on first location fix only
+    // Follow user location on map
     var hasInitialLocation by remember { mutableStateOf(false) }
-    LaunchedEffect(currentLocation) {
-        if (!hasInitialLocation && currentLocation != null) {
-            hasInitialLocation = true
-            mapView.controller.animateTo(GeoPoint(currentLocation!!.latitude, currentLocation!!.longitude))
-            mapView.controller.setZoom(16.0)
+    LaunchedEffect(currentLocation, followLocation) {
+        currentLocation?.let { loc ->
+            if (!hasInitialLocation) {
+                hasInitialLocation = true
+                mapView.controller.setZoom(16.0)
+            }
+            if (followLocation) {
+                mapView.controller.animateTo(GeoPoint(loc.latitude, loc.longitude))
+            }
         }
     }
 
@@ -215,7 +221,16 @@ fun MapScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         // OpenStreetMap
         AndroidView(
-            factory = { mapView },
+            factory = {
+                mapView.apply {
+                    setOnTouchListener { _, event ->
+                        if (event.action == MotionEvent.ACTION_MOVE) {
+                            followLocation = false
+                        }
+                        false
+                    }
+                }
+            },
             modifier = Modifier.fillMaxSize()
         )
 
@@ -351,23 +366,31 @@ fun MapScreen(
                 .align(Alignment.TopEnd),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Center on my location
+            // Toggle follow location
             Card(
                 modifier = Modifier
                     .clickable {
+                        followLocation = true
                         currentLocation?.let {
                             mapView.controller.animateTo(GeoPoint(it.latitude, it.longitude))
                             mapView.controller.setZoom(16.0)
                         }
                     },
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+                    containerColor = if (followLocation)
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
+                    else
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
                 )
             ) {
                 Text(
                     text = "GPS",
                     modifier = Modifier.padding(12.dp),
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (followLocation)
+                        MaterialTheme.colorScheme.onPrimary
+                    else
+                        MaterialTheme.colorScheme.onSurface
                 )
             }
             // Map style toggle

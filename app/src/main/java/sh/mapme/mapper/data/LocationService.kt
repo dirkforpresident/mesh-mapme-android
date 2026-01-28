@@ -85,9 +85,9 @@ class LocationService(private val context: Context) {
         }
 
         try {
-            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000)
-                .setMinUpdateIntervalMillis(2000)
-                .setMinUpdateDistanceMeters(10f)
+            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000)
+                .setMinUpdateIntervalMillis(1000)
+                .setMinUpdateDistanceMeters(3f)
                 .build()
 
             locationCallback = object : LocationCallback() {
