@@ -274,6 +274,13 @@ fun ConnectedScreen(viewModel: MainViewModel) {
     var showDetails by remember { mutableStateOf(false) }
     var showActivityLog by remember { mutableStateOf(false) }
 
+    // Auto-start GPS tracking when connected
+    LaunchedEffect(Unit) {
+        if (!isTracking) {
+            viewModel.startTracking()
+        }
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
