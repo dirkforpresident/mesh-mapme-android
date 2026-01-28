@@ -1090,7 +1090,9 @@ class BleManager(private val context: Context) {
 
         // Discover ACK (0x09) - acknowledgment for repeatersRequest
         if (code == 0x09) {
-            Log.d(TAG, "Discover ACK: ${rxBuffer.toHexString()}")
+            Log.d(TAG, "=== DISCOVER ACK ===")
+            Log.d(TAG, "  bytes: ${rxBuffer.toHexString()}")
+            log("RX", "Discover ACK - waiting for repeaters...", "blue")
             rxBuffer = byteArrayOf()
             return
         }
@@ -1553,6 +1555,12 @@ class BleManager(private val context: Context) {
         //           [1-4] lat (Int32 LE) if flag 0x10
         //           [5-8] lon (Int32 LE) if flag 0x10
         //           [9+] name (string) if flag 0x80
+
+        Log.d(TAG, "=== PARSING ADVERT FROM PAYLOAD ===")
+        Log.d(TAG, "  payload size: ${payload.size}")
+        Log.d(TAG, "  path: ${path.joinToString("→")}")
+        Log.d(TAG, "  rssi: $rssi")
+
         try {
             val publicKey = payload.sliceArray(0 until 32)
             val pubkeyHex = publicKey.toHexString()
@@ -1563,6 +1571,8 @@ class BleManager(private val context: Context) {
             val nodeType = flags and 0x0F  // bits 0-3
             val hasLatLon = (flags and 0x10) != 0  // bit 4
             val hasName = (flags and 0x80) != 0    // bit 7
+
+            Log.d(TAG, "  flags: 0x${"%02x".format(flags)}, type: $nodeType, hasLatLon: $hasLatLon, hasName: $hasName")
 
             val typeNames = mapOf(1 to "Person", 2 to "Repeater", 3 to "Room")
             val typeName = typeNames[nodeType] ?: "Type$nodeType"
@@ -1577,21 +1587,23 @@ class BleManager(private val context: Context) {
                 lat = buffer.int / 1e7
                 lon = buffer.int / 1e7
                 offset += 8
+                Log.d(TAG, "  lat/lon: $lat, $lon")
             }
 
             if (hasName && payload.size > offset) {
                 val nameBytes = payload.sliceArray(offset until payload.size)
                 name = nameBytes.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
+                Log.d(TAG, "  name: '$name'")
             }
 
             val displayName = if (name.isNotEmpty()) name else shortId
-            Log.d(TAG, "Advert: $typeName '$displayName' via ${path.joinToString("→")} @ $rssi dBm")
+            Log.d(TAG, "=== ADVERT PARSED: $typeName '$displayName' via ${path.joinToString("→")} @ $rssi dBm ===")
 
-            // Log repeater discovery
+            // Log repeater discovery - make it visible!
             if (nodeType == 2) {
-                log("RX", "Repeater: $displayName", "blue")
+                log("RX", "📡 Repeater: $displayName ($rssi dBm)", "green")
             } else {
-                log("RX", "$typeName: $displayName", "blue")
+                log("RX", "$typeName: $displayName ($rssi dBm)", "blue")
             }
 
             // TODO: Upload advert to server
