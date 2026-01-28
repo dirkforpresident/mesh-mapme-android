@@ -501,9 +501,9 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                         // Info text
                         Text(
                             text = if (isTxActive)
-                                "Auto-TX läuft (23-42s Intervall) - wird bei RX gestoppt"
+                                "Auto-TX running (23-42s interval) - stops on RX"
                             else
-                                "Auto-TX startet nach 5 Min ohne RX",
+                                "Auto-TX starts after 5 min without RX",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -367,11 +367,29 @@ class BleManager(private val context: Context) {
     }
 
     private fun sendRawData(data: ByteArray) {
-        rxCharacteristic?.let { char ->
-            char.value = data
-            char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            bluetoothGatt?.writeCharacteristic(char)
+        val char = rxCharacteristic
+        val gatt = bluetoothGatt
+
+        if (char == null) {
+            Log.e(TAG, "TX FAILED: rxCharacteristic is null")
+            log("TX", "Error: not connected", "red")
+            return
+        }
+        if (gatt == null) {
+            Log.e(TAG, "TX FAILED: bluetoothGatt is null")
+            log("TX", "Error: not connected", "red")
+            return
+        }
+
+        char.value = data
+        char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        val result = gatt.writeCharacteristic(char)
+
+        if (result) {
             Log.d(TAG, "TX: ${data.toHexString()}")
+        } else {
+            Log.e(TAG, "TX FAILED: writeCharacteristic returned false for ${data.toHexString()}")
+            log("TX", "Write failed", "red")
         }
     }
 
@@ -460,13 +478,27 @@ class BleManager(private val context: Context) {
                     // Auto-reconnect once to retry verification
                     autoReconnectCount++
                     Log.d(TAG, "Signing failed - auto-reconnecting (attempt $autoReconnectCount)")
-                    log("BLE", "Reconnecting...", "orange")
+                    log("BLE", "Reconnecting for verify...", "orange")
                     val device = lastConnectedDevice
                     if (device != null) {
-                        // Disconnect and reconnect after a short delay
-                        disconnect()
-                        delay(1000)
+                        // Disconnect completely first
+                        bluetoothGatt?.disconnect()
+                        bluetoothGatt?.close()
+                        bluetoothGatt = null
+                        rxCharacteristic = null
+                        txCharacteristic = null
+                        _isConnected.value = false
+                        resetSessionStats()
+
+                        // Wait for BLE stack to settle
+                        delay(2000)
+
+                        // Reconnect
+                        Log.d(TAG, "Reconnecting to ${device.name ?: device.address}")
                         connect(device)
+                    } else {
+                        Log.e(TAG, "Cannot reconnect - no lastConnectedDevice")
+                        log("BLE", "Reconnect failed", "red")
                     }
                 } else {
                     // Give up and create unverified session
@@ -695,9 +727,14 @@ class BleManager(private val context: Context) {
 
     private fun sendChannelMessage(channelIdx: Int, message: String) {
         // SendChannelTxtMsg: [0x03][channelIdx: 1 byte][message bytes...]
+        if (!_coverageChannelReady.value) {
+            Log.e(TAG, "Cannot send channel message - coverage channel not ready")
+            log("TX", "Channel not ready", "red")
+            return
+        }
         val payload = byteArrayOf(channelIdx.toByte()) + message.toByteArray()
         sendCommand(CommandCode.SEND_CHANNEL_TXT_MSG, payload)
-        Log.d(TAG, "Channel message sent (idx: $channelIdx, msg: $message)")
+        Log.d(TAG, "Channel message sent (idx: $channelIdx, msg: $message, ${payload.size + 1} bytes)")
     }
 
     // MARK: - TX Timers (only in LIVE mode)
