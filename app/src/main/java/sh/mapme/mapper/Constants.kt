@@ -38,7 +38,7 @@ object Constants {
     const val COVERAGE_TX_MIN_INTERVAL = 23_000L // Min ms between coverage messages
     const val COVERAGE_TX_MAX_INTERVAL = 42_000L // Max ms between coverage messages
     const val MANUAL_PING_COOLDOWN = 120_000L    // 2 min cooldown for manual ping
-    const val MANUAL_DISCOVER_COOLDOWN = 10_000L // 10s cooldown for manual discover
+    const val MANUAL_DISCOVER_COOLDOWN = 30_000L // 30s cooldown for manual discover
 }
 
 // MARK: - Command Codes (App → Companion)

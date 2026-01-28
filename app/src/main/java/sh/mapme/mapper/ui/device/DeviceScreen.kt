@@ -434,30 +434,59 @@ fun ConnectedScreen(viewModel: MainViewModel) {
             }
         }
 
-        // Manual TX (Live mode)
+        // TX Controls (Live mode)
         if (privacyMode == "live") {
             item {
+                // Cooldown state that updates every second
+                var discoverCooldown by remember { mutableStateOf(0) }
+                var pingCooldown by remember { mutableStateOf(0) }
+
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        discoverCooldown = viewModel.getDiscoverCooldown()
+                        pingCooldown = viewModel.getPingCooldown()
+                        kotlinx.coroutines.delay(1000)
+                    }
+                }
+
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
+                        // Status row
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Manual TX",
+                                text = "TX Controls",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.SemiBold
                             )
 
-                            if (isTxActive) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Auto-Discover indicator
+                                Surface(
+                                    modifier = Modifier.size(8.dp),
+                                    shape = MaterialTheme.shapes.small,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                ) {}
+                                Text(
+                                    text = "Auto 30s",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+
+                                // TX Active indicator
+                                if (isTxActive) {
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Surface(
                                         modifier = Modifier.size(8.dp),
                                         shape = MaterialTheme.shapes.small,
                                         color = MaterialTheme.colorScheme.tertiary
                                     ) {}
-                                    Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         text = "TX Active",
                                         style = MaterialTheme.typography.labelSmall,
@@ -467,30 +496,53 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                             }
                         }
 
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Info text
+                        Text(
+                            text = if (isTxActive)
+                                "Auto-TX läuft (23-42s Intervall) - wird bei RX gestoppt"
+                            else
+                                "Auto-TX startet nach 5 Min ohne RX",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
                         Spacer(modifier = Modifier.height(12.dp))
 
+                        // Buttons with cooldown
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
+                            // Discover button
                             Button(
                                 onClick = { viewModel.sendDiscover() },
-                                enabled = viewModel.canSendDiscover(),
+                                enabled = discoverCooldown == 0,
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("DISCOVER")
+                                if (discoverCooldown > 0) {
+                                    Text("DISCOVER (${discoverCooldown}s)")
+                                } else {
+                                    Text("DISCOVER")
+                                }
                             }
 
+                            // Ping button
                             if (coverageChannelReady) {
                                 Button(
                                     onClick = { viewModel.sendPing() },
-                                    enabled = viewModel.canSendPing(),
+                                    enabled = pingCooldown == 0 && viewModel.canSendPing(),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = MaterialTheme.colorScheme.tertiary
                                     ),
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Text("PING")
+                                    if (pingCooldown > 0) {
+                                        Text("PING (${pingCooldown}s)")
+                                    } else {
+                                        Text("PING H3")
+                                    }
                                 }
                             }
                         }

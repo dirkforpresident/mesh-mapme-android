@@ -1396,7 +1396,6 @@ class BleManager(private val context: Context) {
             if (data.size < 5 + pathLen) return
 
             // Parse path - EACH HOP IS 1 BYTE! (not 4 bytes)
-            // iOS: for i in 0..<pathLen { let byte = data[startIndex + i]; path.append(hex(byte)) }
             val path = mutableListOf<String>()
             repeat(pathLen) {
                 if (buffer.remaining() >= 1) {
@@ -1413,7 +1412,20 @@ class BleManager(private val context: Context) {
                 return
             }
 
-            Log.d(TAG, "LogRxData: rssi=$rssi snr=$snr path=${path.joinToString("→")}")
+            // Extract payload (after path)
+            val payloadStart = 5 + pathLen
+            val payload = if (data.size > payloadStart) {
+                data.sliceArray(payloadStart until data.size)
+            } else {
+                byteArrayOf()
+            }
+
+            Log.d(TAG, "LogRxData: rssi=$rssi snr=$snr path=${path.joinToString("→")} payload=${payload.size}B")
+
+            // Check if payload is an Advert (min 101 bytes: 32 pubkey + 4 timestamp + 64 sig + 1 flags)
+            if (payload.size >= 101) {
+                parseAdvertFromPayload(payload, rssi, path)
+            }
 
             // Create RX packet
             val packet = RxPacket(
@@ -1440,6 +1452,63 @@ class BleManager(private val context: Context) {
             createRxSample(packet)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse LogRxData", e)
+        }
+    }
+
+    private fun parseAdvertFromPayload(payload: ByteArray, rssi: Int, path: List<String>) {
+        // Advert payload format (matches iOS):
+        // [0-31]    publicKey (32 bytes)
+        // [32-35]   timestamp (UInt32 LE)
+        // [36-99]   signature (64 bytes)
+        // [100+]    appData:
+        //           [0] flags: bits 0-3 = type, bit 4 = has lat/lon, bit 7 = has name
+        //           [1-4] lat (Int32 LE) if flag 0x10
+        //           [5-8] lon (Int32 LE) if flag 0x10
+        //           [9+] name (string) if flag 0x80
+        try {
+            val publicKey = payload.sliceArray(0 until 32)
+            val pubkeyHex = publicKey.toHexString()
+            val shortId = pubkeyHex.take(4)
+
+            // appData starts at byte 100
+            val flags = payload[100].toInt() and 0xFF
+            val nodeType = flags and 0x0F  // bits 0-3
+            val hasLatLon = (flags and 0x10) != 0  // bit 4
+            val hasName = (flags and 0x80) != 0    // bit 7
+
+            val typeNames = mapOf(1 to "Person", 2 to "Repeater", 3 to "Room")
+            val typeName = typeNames[nodeType] ?: "Type$nodeType"
+
+            var name = ""
+            var lat = 0.0
+            var lon = 0.0
+
+            var offset = 101
+            if (hasLatLon && payload.size >= offset + 8) {
+                val buffer = ByteBuffer.wrap(payload, offset, 8).order(ByteOrder.LITTLE_ENDIAN)
+                lat = buffer.int / 1e7
+                lon = buffer.int / 1e7
+                offset += 8
+            }
+
+            if (hasName && payload.size > offset) {
+                val nameBytes = payload.sliceArray(offset until payload.size)
+                name = nameBytes.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
+            }
+
+            val displayName = if (name.isNotEmpty()) name else shortId
+            Log.d(TAG, "Advert: $typeName '$displayName' via ${path.joinToString("→")} @ $rssi dBm")
+
+            // Log repeater discovery
+            if (nodeType == 2) {
+                log("RX", "Repeater: $displayName", "blue")
+            } else {
+                log("RX", "$typeName: $displayName", "blue")
+            }
+
+            // TODO: Upload advert to server
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse Advert from payload", e)
         }
     }
 

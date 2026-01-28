@@ -77,6 +77,8 @@ class MainViewModel : ViewModel() {
     fun canSendDiscover() = bleManager.canSendManualDiscover()
     fun canSendPing() = bleManager.canSendManualPing()
     fun setPrivacyMode(mode: String) = bleManager.setPrivacyMode(mode)
+    fun getDiscoverCooldown() = bleManager.manualDiscoverCooldownRemaining
+    fun getPingCooldown() = bleManager.manualPingCooldownRemaining
 
     // MARK: - Location Actions
 
