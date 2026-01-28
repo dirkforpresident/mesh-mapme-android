@@ -50,7 +50,7 @@ class FeedbackManager(private val context: Context) {
     }
 
     /**
-     * Play TX feedback - rising tone (440Hz → 880Hz, 150ms)
+     * Play TX feedback - rising tone (440Hz -> 880Hz, 150ms)
      */
     fun playTx() {
         if (soundEnabled) {
@@ -60,7 +60,7 @@ class FeedbackManager(private val context: Context) {
     }
 
     /**
-     * Play new hex discovered feedback - higher sweep (660Hz → 1320Hz, 200ms)
+     * Play new hex discovered feedback - higher sweep (660Hz -> 1320Hz, 200ms)
      */
     fun playHex() {
         if (soundEnabled) {
@@ -70,7 +70,7 @@ class FeedbackManager(private val context: Context) {
     }
 
     /**
-     * Play repeater advertisement feedback - two-tone (523Hz → 659Hz, 200ms)
+     * Play repeater advertisement feedback - two-tone (523Hz -> 659Hz, 200ms)
      */
     fun playAdvert() {
         if (soundEnabled) {

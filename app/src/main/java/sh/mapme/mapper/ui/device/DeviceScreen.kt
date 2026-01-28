@@ -278,6 +278,7 @@ fun ConnectedScreen(viewModel: MainViewModel) {
 
     var showDetails by remember { mutableStateOf(false) }
     var showActivityLog by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
 
     // Feedback settings
     val feedbackManager = MapmeApp.instance.feedbackManager
@@ -346,7 +347,7 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                                             MaterialTheme.colorScheme.errorContainer
                                     )
                                 )
-                                // Battery chip
+                                // Battery chip (only show when we have actual data, -1 = unknown)
                                 if (batteryPercent >= 0) {
                                     AssistChip(
                                         onClick = {},
@@ -417,69 +418,31 @@ fun ConnectedScreen(viewModel: MainViewModel) {
             }
         }
 
-        // START Button (when not verified)
-        if (!sessionVerified) {
-            item {
-                Button(
-                    onClick = { viewModel.startVerification() },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    Text("START", fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-
-        // Compact Feedback Row (Sound + Vibration toggles inline)
+        // Action buttons row (START + Disconnect)
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Sound toggle
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Sound", style = MaterialTheme.typography.bodySmall)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Switch(
-                        checked = soundEnabled,
-                        onCheckedChange = {
-                            soundEnabled = it
-                            feedbackManager.soundEnabled = it
-                        },
-                        modifier = Modifier.scale(0.8f)
-                    )
+                if (!sessionVerified) {
+                    Button(
+                        onClick = { viewModel.startVerification() },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Text("START", fontWeight = FontWeight.Bold)
+                    }
                 }
-                // Vibration toggle
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Vibrate", style = MaterialTheme.typography.bodySmall)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Switch(
-                        checked = vibrateEnabled,
-                        onCheckedChange = {
-                            vibrateEnabled = it
-                            feedbackManager.vibrateEnabled = it
-                        },
-                        modifier = Modifier.scale(0.8f)
-                    )
-                }
-                // Disconnect button (compact)
                 OutlinedButton(
                     onClick = { viewModel.disconnect() },
+                    modifier = if (sessionVerified) Modifier.fillMaxWidth() else Modifier,
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = MaterialTheme.colorScheme.error
-                    ),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    )
                 ) {
-                    Text("Disconnect", style = MaterialTheme.typography.bodySmall)
+                    Text("Disconnect")
                 }
             }
         }
@@ -498,47 +461,6 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                     MaterialTheme.colorScheme.secondary)
                 StatusCard(Modifier.weight(1f), "arrow.up", "$sessionUploaded", "Up",
                     if (sessionUploaded > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-
-        // Privacy Mode
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Privacy Mode",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        listOf("live" to "Live", "normal" to "Normal", "anonym" to "Ghost").forEach { (mode, label) ->
-                            FilterChip(
-                                selected = privacyMode == mode,
-                                onClick = { viewModel.setPrivacyMode(mode) },
-                                label = { Text(label) },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = when (privacyMode) {
-                            "live" -> "Real-time TX - actively pings to discover coverage"
-                            "normal" -> "Data uploaded with 3 hour delay"
-                            else -> "Data uploaded with 24 hour delay"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
             }
         }
 
@@ -604,18 +526,6 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Info text
-                        Text(
-                            text = if (isTxActive)
-                                "Auto-TX running (23-42s interval) - stops on RX"
-                            else
-                                "Auto-TX starts after 3 min without RX",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
                         Spacer(modifier = Modifier.height(12.dp))
 
                         // Buttons with cooldown
@@ -661,87 +571,6 @@ fun ConnectedScreen(viewModel: MainViewModel) {
             }
         }
 
-        // Pending Samples
-        if (pendingSamples.isNotEmpty()) {
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "${pendingSamples.size} samples waiting",
-                            color = MaterialTheme.colorScheme.onTertiaryContainer,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (sessionVerified) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                        }
-                        TextButton(
-                            onClick = { viewModel.clearPendingSamples() },
-                            colors = ButtonDefaults.textButtonColors(
-                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
-                            )
-                        ) {
-                            Text("Clear")
-                        }
-                    }
-                }
-            }
-        }
-
-        // Recent RX
-        if (recentRxPackets.isNotEmpty()) {
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "Recent RX",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        recentRxPackets.take(3).forEach { packet ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Surface(
-                                    modifier = Modifier.size(8.dp),
-                                    shape = MaterialTheme.shapes.small,
-                                    color = rssiColor(packet.rssi)
-                                ) {}
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = packet.path.joinToString("→"),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    text = "${packet.rssi} dBm",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         // Activity Log
         if (debugLog.isNotEmpty()) {
@@ -762,7 +591,7 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = if (showActivityLog) "▲" else "▼",
+                                text = if (showActivityLog) "^" else "v",
                                 style = MaterialTheme.typography.labelSmall
                             )
                         }
@@ -786,6 +615,110 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                                         color = logColor(entry.color)
                                     )
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Settings (collapsible)
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showSettings = !showSettings }
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Settings",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = privacyMode.replaceFirstChar { it.uppercase() },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (showSettings) "^" else "v",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+
+                    if (showSettings) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Divider()
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Privacy Mode
+                        Text(
+                            text = "Privacy Mode",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf("live" to "Live", "normal" to "Normal", "anonym" to "Ghost").forEach { (mode, label) ->
+                                FilterChip(
+                                    selected = privacyMode == mode,
+                                    onClick = { viewModel.setPrivacyMode(mode) },
+                                    label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                        Text(
+                            text = when (privacyMode) {
+                                "live" -> "Instant upload with adaptive TX"
+                                "normal" -> "Data uploaded with 3 hour delay"
+                                else -> "Data uploaded with 24 hour delay"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Sound & Vibration
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(24.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Sound", style = MaterialTheme.typography.bodySmall)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Switch(
+                                    checked = soundEnabled,
+                                    onCheckedChange = {
+                                        soundEnabled = it
+                                        feedbackManager.soundEnabled = it
+                                    },
+                                    modifier = Modifier.scale(0.8f)
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Vibrate", style = MaterialTheme.typography.bodySmall)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Switch(
+                                    checked = vibrateEnabled,
+                                    onCheckedChange = {
+                                        vibrateEnabled = it
+                                        feedbackManager.vibrateEnabled = it
+                                    },
+                                    modifier = Modifier.scale(0.8f)
+                                )
                             }
                         }
                     }

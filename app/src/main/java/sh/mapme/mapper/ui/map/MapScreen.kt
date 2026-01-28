@@ -40,6 +40,7 @@ fun MapScreen(
     val sessionUploaded by viewModel.sessionUploaded.collectAsState()
     val recentRxPackets by viewModel.recentRxPackets.collectAsState()
     val isTracking by viewModel.isTracking.collectAsState()
+    val batteryMillivolts by viewModel.batteryMillivolts.collectAsState()
 
     var showStats by remember { mutableStateOf(true) }
     var useDarkMap by remember { mutableStateOf(true) }
@@ -241,7 +242,7 @@ fun MapScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Text("▲", style = MaterialTheme.typography.labelSmall)
+                        Text("^", style = MaterialTheme.typography.labelSmall)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     StatRow(label = "Hexes", value = "${visitedHexes.size}")
@@ -254,6 +255,9 @@ fun MapScreen(
                         )
                     }
                     StatRow(label = "Up", value = "$sessionUploaded")
+                    if (batteryMillivolts > 0) {
+                        StatRow(label = "Batt", value = "${batteryMillivolts}mV")
+                    }
                 }
             }
         } else {
@@ -277,7 +281,7 @@ fun MapScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("▼", style = MaterialTheme.typography.labelSmall)
+                    Text("v", style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
@@ -300,7 +304,7 @@ fun MapScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = if (showActivityFeed) "▼" else "▶",
+                            text = if (showActivityFeed) "v" else ">",
                             style = MaterialTheme.typography.labelSmall
                         )
                         Spacer(modifier = Modifier.width(4.dp))
@@ -324,7 +328,7 @@ fun MapScreen(
                                 ) {}
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = packet.path.joinToString("→"),
+                                    text = packet.path.joinToString(">"),
                                     style = MaterialTheme.typography.labelSmall
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
@@ -361,7 +365,7 @@ fun MapScreen(
                 )
             ) {
                 Text(
-                    text = "◎",
+                    text = "GPS",
                     modifier = Modifier.padding(12.dp),
                     style = MaterialTheme.typography.titleMedium
                 )
@@ -375,7 +379,7 @@ fun MapScreen(
                 )
             ) {
                 Text(
-                    text = if (useDarkMap) "☀" else "🌙",
+                    text = if (useDarkMap) "Light" else "Dark",
                     modifier = Modifier.padding(12.dp),
                     style = MaterialTheme.typography.titleMedium
                 )

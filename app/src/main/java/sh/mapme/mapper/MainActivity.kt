@@ -108,7 +108,17 @@ fun MainApp() {
             startDestination = "home",
             modifier = Modifier.padding(innerPadding)
         ) {
-            composable("home") { HomeScreen(viewModel) }
+            composable("home") {
+                HomeScreen(
+                    viewModel = viewModel,
+                    onNavigateToDevice = {
+                        selectedTab = 1
+                        navController.navigate("device") {
+                            popUpTo("home")
+                        }
+                    }
+                )
+            }
             composable("device") { DeviceScreen(viewModel) }
             composable("map") { MapScreen(viewModel) }
         }

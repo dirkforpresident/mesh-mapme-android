@@ -25,7 +25,7 @@ object Constants {
 
     // MARK: - App Version
     const val APP_VERSION = "1.0.0"
-    const val DEBUG_BUILD = 63
+    const val DEBUG_BUILD = 64
 
     // MARK: - Server
     const val API_BASE_URL = "https://mapme.sh"

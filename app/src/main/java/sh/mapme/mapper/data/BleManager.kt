@@ -80,11 +80,11 @@ class BleManager(private val context: Context) {
     private val _deviceInfo = MutableStateFlow<DeviceInfo?>(null)
     val deviceInfo: StateFlow<DeviceInfo?> = _deviceInfo.asStateFlow()
 
-    // Battery state
-    private val _batteryPercent = MutableStateFlow(0)
+    // Battery state (-1 = unknown/not yet fetched)
+    private val _batteryPercent = MutableStateFlow(-1)
     val batteryPercent: StateFlow<Int> = _batteryPercent.asStateFlow()
 
-    private val _batteryMillivolts = MutableStateFlow(0)
+    private val _batteryMillivolts = MutableStateFlow(-1)
     val batteryMillivolts: StateFlow<Int> = _batteryMillivolts.asStateFlow()
 
     private var batteryTimerJob: Job? = null
@@ -274,8 +274,8 @@ class BleManager(private val context: Context) {
         _connectedDeviceName.value = null
         _selfInfo.value = null
         _deviceInfo.value = null
-        _batteryPercent.value = 0
-        _batteryMillivolts.value = 0
+        _batteryPercent.value = -1
+        _batteryMillivolts.value = -1
         resetSessionStats()
         isFirstConnect = true  // Reset for next connection
 
@@ -719,12 +719,6 @@ class BleManager(private val context: Context) {
         log("RX", "Device signed", "green")
         feedbackManager?.playConnected()
 
-        // Start battery monitoring
-        scope.launch {
-            delay(500)
-            startBatteryTimer()
-        }
-
         // Now call server to create session
         createServerSession(pubKeyHex, challenge, signatureHex)
     }
@@ -780,15 +774,15 @@ class BleManager(private val context: Context) {
 
                         // Setup coverage channel regardless of verification
                         // This allows TX/RX to work even without server verification
-                        if (token != null) {
-                            setupCoverageChannel()
-                        }
+                        setupCoverageChannel()
                     }
                 } else {
                     Log.e(TAG, "Session creation failed: $responseCode")
                     scope.launch(Dispatchers.Main) {
                         pendingChallenge = null  // Clear on error too
                         log("RX", "Session error: $responseCode", "red")
+                        // Still setup coverage channel even on server error
+                        setupCoverageChannel()
                     }
                 }
             } catch (e: Exception) {
@@ -796,6 +790,8 @@ class BleManager(private val context: Context) {
                 scope.launch(Dispatchers.Main) {
                     pendingChallenge = null  // Clear on error too
                     log("RX", "Connection error", "red")
+                    // Still setup coverage channel even on network error
+                    setupCoverageChannel()
                 }
             }
         }
@@ -859,6 +855,10 @@ class BleManager(private val context: Context) {
     fun setupCoverageChannel() {
         if (!_isConnected.value) {
             Log.d(TAG, "Cannot setup coverage channel - not connected")
+            return
+        }
+        if (_coverageChannelReady.value) {
+            Log.d(TAG, "Coverage channel already ready, skipping setup")
             return
         }
 
@@ -1198,6 +1198,7 @@ class BleManager(private val context: Context) {
                 ResponseCode.CHANNEL_INFO -> 50
                 ResponseCode.SIGNATURE_READY -> 6
                 ResponseCode.SIGNATURE -> 65
+                ResponseCode.BATTERY_AND_STORAGE -> 11  // [code][mV:2][usedKb:4][totalKb:4]
                 else -> 1
             }
 
@@ -1424,11 +1425,20 @@ class BleManager(private val context: Context) {
                 sendDeviceQuery()
             }
 
-            // Start signing flow after SelfInfo (give device time to be ready)
+            // Start signing flow first (most important)
+            // Coverage channel setup happens AFTER signing completes (in createServerSession)
             scope.launch {
-                delay(1000)
+                delay(500)
                 if (!_isVerified.value) {
                     startSigningFlow()
+                }
+            }
+
+            // Start battery monitoring after signing has time to start
+            scope.launch {
+                delay(2000)
+                if (_batteryPercent.value < 0) {
+                    startBatteryTimer()
                 }
             }
         } catch (e: Exception) {
@@ -1652,12 +1662,6 @@ class BleManager(private val context: Context) {
                 }
             }
 
-            // Only process RX with at least 1 hop (not direct reception)
-            if (path.isEmpty()) {
-                Log.d(TAG, "LogRxData: path empty (pathLen=$pathLen), skipping")
-                return
-            }
-
             // Extract payload (after path)
             val payloadStart = 5 + pathLen
             val payload = if (data.size > payloadStart) {
@@ -1666,9 +1670,22 @@ class BleManager(private val context: Context) {
                 byteArrayOf()
             }
 
+            // Check if payload contains embedded DISCOVER_REPLY (0x8E) when pathLen=0
+            if (path.isEmpty() && payload.isNotEmpty()) {
+                // Look for 0x8E in payload - might be embedded discover reply
+                val discoverReplyIndex = payload.indexOfFirst { it == 0x8E.toByte() }
+                if (discoverReplyIndex >= 0 && payload.size >= discoverReplyIndex + 42) {
+                    Log.d(TAG, "Found embedded DISCOVER_REPLY at offset $discoverReplyIndex")
+                    val discoverData = payload.sliceArray(discoverReplyIndex until payload.size)
+                    parseDiscoverReply(discoverData)
+                }
+                Log.d(TAG, "LogRxData: path empty (pathLen=$pathLen), processed for embedded replies")
+                return
+            }
+
             // Get payload type from header: (header >> 2) & 0x0F
             val payloadType = (header shr 2) and 0x0F
-            Log.d(TAG, "LogRxData: rssi=$rssi snr=$snr path=${path.joinToString("→")} payloadType=$payloadType payload=${payload.size}B")
+            Log.d(TAG, "LogRxData: rssi=$rssi snr=$snr path=${path.joinToString(">")} payloadType=$payloadType payload=${payload.size}B")
 
             // Check if this is our TX bounced back from a repeater (GRP_TXT = 0x05)
             // Decrypt the payload and verify it contains our signature
@@ -1682,7 +1699,7 @@ class BleManager(private val context: Context) {
                         pendingTxTimeout?.cancel()
                         val repeater = path.last()  // Last hop is the repeater that sent it back
                         Log.d(TAG, "=== TX CONFIRMED by repeater $repeater @ $rssi dBm ===")
-                        log("TX", "Confirmed via $repeater ($rssi dBm)", "green")
+                        log("TX", "PING: $repeater ($rssi dBm)", "green")
                         feedbackManager?.playTxConfirm()
                         return  // Don't process as normal RX
                     }
@@ -1717,7 +1734,7 @@ class BleManager(private val context: Context) {
                 0x00, 0x01 -> "ADV"
                 else -> "T$payloadType"
             }
-            log("RX", "$typeLabel ${path.joinToString("→")} $rssi dBm", "green")
+            log("RX", "$typeLabel ${path.joinToString(">")} $rssi dBm", "green")
             feedbackManager?.playRx()
 
             // Reset TX timers on RX
@@ -1743,7 +1760,7 @@ class BleManager(private val context: Context) {
 
         Log.d(TAG, "=== PARSING ADVERT FROM PAYLOAD ===")
         Log.d(TAG, "  payload size: ${payload.size}")
-        Log.d(TAG, "  path: ${path.joinToString("→")}")
+        Log.d(TAG, "  path: ${path.joinToString(">")}")
         Log.d(TAG, "  rssi: $rssi")
 
         try {
@@ -1782,11 +1799,11 @@ class BleManager(private val context: Context) {
             }
 
             val displayName = if (name.isNotEmpty()) name else shortId
-            Log.d(TAG, "=== ADVERT PARSED: $typeName '$displayName' via ${path.joinToString("→")} @ $rssi dBm ===")
+            Log.d(TAG, "=== ADVERT PARSED: $typeName '$displayName' via ${path.joinToString(">")} @ $rssi dBm ===")
 
             // Log repeater discovery - make it visible!
             if (nodeType == 2) {
-                log("RX", "📡 Repeater: $displayName ($rssi dBm)", "green")
+                log("RX", "Repeater: $displayName ($rssi dBm)", "green")
                 feedbackManager?.playAdvert()
             } else {
                 log("RX", "$typeName: $displayName ($rssi dBm)", "blue")
@@ -1908,8 +1925,8 @@ class BleManager(private val context: Context) {
         val pubkeyHex = pubkeyBytes.joinToString("") { "%02x".format(it) }
         val shortId = pubkeyHex.take(4)
 
-        Log.d(TAG, "Repeater found: $shortId RSSI=${rssi}dBm SNR=${snr}dB")
-        log("RX", "Repeater $shortId (${rssi}dBm, ${snr}dB)", "green")
+        Log.d(TAG, "DISCOVER REPLY: $shortId RSSI=${rssi}dBm SNR=${snr}dB")
+        log("RX", "DISC: $shortId (${rssi}dBm, ${snr}dB)", "green")
         feedbackManager?.playDiscoverReply()
 
         // Add sample for upload
@@ -1988,7 +2005,7 @@ class BleManager(private val context: Context) {
 
             // Skip first 3 bytes (channel_hash: 1B, MAC: 2B)
             val encrypted = payload.sliceArray(3 until payload.size)
-            Log.d(TAG, "AES: encrypted=${encrypted.size}B key=${sessionChannelKey.take(4).toHexString()}")
+            Log.d(TAG, "AES: encrypted=${encrypted.size}B key=${sessionChannelKey.take(4).toByteArray().toHexString()}")
 
             // AES-ECB requires data to be multiple of 16 bytes
             if (encrypted.isEmpty() || encrypted.size % 16 != 0) {
@@ -2001,7 +2018,7 @@ class BleManager(private val context: Context) {
             cipher.init(Cipher.DECRYPT_MODE, keySpec)
 
             val decrypted = cipher.doFinal(encrypted)
-            Log.d(TAG, "AES: decrypted raw=${decrypted.take(20).toHexString()}")
+            Log.d(TAG, "AES: decrypted raw=${decrypted.take(20).toByteArray().toHexString()}")
 
             // Decrypted format: [timestamp: 4 bytes][null][text...]
             // Skip first 4 bytes (timestamp), then skip leading nulls, then extract text

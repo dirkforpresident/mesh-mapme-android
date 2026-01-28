@@ -67,7 +67,7 @@ class HexService {
         scope.launch {
             try {
                 // Calculate bounding box (~5km radius)
-                val latDelta = radiusKm / 111.0  // 1 degree lat ≈ 111km
+                val latDelta = radiusKm / 111.0  // 1 degree lat ~ 111km
                 val lonDelta = radiusKm / (111.0 * Math.cos(Math.toRadians(lat)))
 
                 val minLat = lat - latDelta
