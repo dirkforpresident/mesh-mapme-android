@@ -1986,19 +1986,38 @@ class BleManager(private val context: Context) {
         try {
             if (payload.size < 3) return null
 
-            // Skip first 3 bytes (1 byte + 2 bytes like connect.html)
+            // Skip first 3 bytes (channel_hash: 1B, MAC: 2B)
             val encrypted = payload.sliceArray(3 until payload.size)
+            Log.d(TAG, "AES: encrypted=${encrypted.size}B key=${sessionChannelKey.take(4).toHexString()}")
 
             // AES-ECB requires data to be multiple of 16 bytes
-            if (encrypted.isEmpty() || encrypted.size % 16 != 0) return null
+            if (encrypted.isEmpty() || encrypted.size % 16 != 0) {
+                Log.d(TAG, "AES: invalid length ${encrypted.size}")
+                return null
+            }
 
             val cipher = Cipher.getInstance("AES/ECB/NoPadding")
             val keySpec = SecretKeySpec(sessionChannelKey, "AES")
             cipher.init(Cipher.DECRYPT_MODE, keySpec)
 
             val decrypted = cipher.doFinal(encrypted)
-            // Remove null padding and convert to string
-            return decrypted.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
+            Log.d(TAG, "AES: decrypted raw=${decrypted.take(20).toHexString()}")
+
+            // Decrypted format: [timestamp: 4 bytes][null][text...]
+            // Skip first 4 bytes (timestamp), then skip leading nulls, then extract text
+            var textStart = 4  // Skip timestamp
+            while (textStart < decrypted.size && decrypted[textStart] == 0.toByte()) {
+                textStart++  // Skip nulls after timestamp
+            }
+            var textEnd = decrypted.size
+            while (textEnd > textStart && decrypted[textEnd - 1] == 0.toByte()) {
+                textEnd--  // Remove trailing nulls
+            }
+
+            val textBytes = decrypted.sliceArray(textStart until textEnd)
+            val result = textBytes.decodeToString()
+            Log.d(TAG, "AES: text='$result' (bytes $textStart..$textEnd)")
+            return result
         } catch (e: Exception) {
             Log.d(TAG, "Decrypt failed: ${e.message}")
             return null
