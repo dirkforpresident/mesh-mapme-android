@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#22C55E</color>
+    <color name="ic_launcher_background">#0D1B2A</color>
     <color name="mapme_green">#22C55E</color>
     <color name="mapme_blue">#3B82F6</color>
     <color name="mapme_orange">#F97316</color>
