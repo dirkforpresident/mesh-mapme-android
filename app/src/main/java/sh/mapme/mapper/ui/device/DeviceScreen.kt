@@ -21,6 +21,7 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import sh.mapme.mapper.Constants
 import sh.mapme.mapper.MainViewModel
+import sh.mapme.mapper.MapmeApp
 import sh.mapme.mapper.R
 import sh.mapme.mapper.data.BleManager
 
@@ -276,6 +277,11 @@ fun ConnectedScreen(viewModel: MainViewModel) {
     var showDetails by remember { mutableStateOf(false) }
     var showActivityLog by remember { mutableStateOf(false) }
 
+    // Feedback settings
+    val feedbackManager = MapmeApp.instance.feedbackManager
+    var soundEnabled by remember { mutableStateOf(feedbackManager.soundEnabled) }
+    var vibrateEnabled by remember { mutableStateOf(feedbackManager.vibrateEnabled) }
+
     // Auto-start GPS tracking when connected
     LaunchedEffect(Unit) {
         if (!isTracking) {
@@ -383,6 +389,48 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                     )
                 ) {
                     Text("START", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        // Feedback Settings
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Feedback",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Sound")
+                        Switch(
+                            checked = soundEnabled,
+                            onCheckedChange = {
+                                soundEnabled = it
+                                feedbackManager.soundEnabled = it
+                            }
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Vibration")
+                        Switch(
+                            checked = vibrateEnabled,
+                            onCheckedChange = {
+                                vibrateEnabled = it
+                                feedbackManager.vibrateEnabled = it
+                            }
+                        )
+                    }
                 }
             }
         }
