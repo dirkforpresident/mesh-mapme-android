@@ -432,58 +432,55 @@ fun ConnectedScreen(viewModel: MainViewModel) {
             }
         }
 
-        // Feedback Settings
+        // Compact Feedback Row (Sound + Vibration toggles inline)
         item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Feedback",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Sound")
-                        Switch(
-                            checked = soundEnabled,
-                            onCheckedChange = {
-                                soundEnabled = it
-                                feedbackManager.soundEnabled = it
-                            }
-                        )
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Vibration")
-                        Switch(
-                            checked = vibrateEnabled,
-                            onCheckedChange = {
-                                vibrateEnabled = it
-                                feedbackManager.vibrateEnabled = it
-                            }
-                        )
-                    }
-                }
-            }
-        }
-
-        // Disconnect Button (always visible)
-        item {
-            OutlinedButton(
-                onClick = { viewModel.disconnect() },
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = MaterialTheme.colorScheme.error
-                ),
-                modifier = Modifier.fillMaxWidth()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Disconnect")
+                // Sound toggle
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Sound", style = MaterialTheme.typography.bodySmall)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Switch(
+                        checked = soundEnabled,
+                        onCheckedChange = {
+                            soundEnabled = it
+                            feedbackManager.soundEnabled = it
+                        },
+                        modifier = Modifier.scale(0.8f)
+                    )
+                }
+                // Vibration toggle
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Vibrate", style = MaterialTheme.typography.bodySmall)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Switch(
+                        checked = vibrateEnabled,
+                        onCheckedChange = {
+                            vibrateEnabled = it
+                            feedbackManager.vibrateEnabled = it
+                        },
+                        modifier = Modifier.scale(0.8f)
+                    )
+                }
+                // Disconnect button (compact)
+                OutlinedButton(
+                    onClick = { viewModel.disconnect() },
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text("Disconnect", style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
 
@@ -614,7 +611,7 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                             text = if (isTxActive)
                                 "Auto-TX running (23-42s interval) - stops on RX"
                             else
-                                "Auto-TX starts after 5 min without RX",
+                                "Auto-TX starts after 3 min without RX",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

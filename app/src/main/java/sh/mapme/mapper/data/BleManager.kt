@@ -1682,8 +1682,9 @@ class BleManager(private val context: Context) {
                         pendingTxTimeout?.cancel()
                         val repeater = path.last()  // Last hop is the repeater that sent it back
                         Log.d(TAG, "=== TX CONFIRMED by repeater $repeater @ $rssi dBm ===")
-                        log("TX", "✓ via $repeater ($rssi dBm)", "green")
+                        log("TX", "Confirmed via $repeater ($rssi dBm)", "green")
                         feedbackManager?.playTxConfirm()
+                        return  // Don't process as normal RX
                     }
                 }
             }
@@ -2011,7 +2012,8 @@ class BleManager(private val context: Context) {
     private fun verifyTxResponse(payload: ByteArray): Boolean {
         val decrypted = decryptChannelPayload(payload) ?: return false
         Log.d(TAG, "Decrypted payload: '$decrypted'")
-        return decrypted.contains(TX_SIGNATURE)
+        // Check for both auto TX signature (=]) and manual ping signature (=/)
+        return decrypted.contains(TX_SIGNATURE) || decrypted.contains("=/")
     }
 
     private fun log(category: String, message: String, color: String) {
