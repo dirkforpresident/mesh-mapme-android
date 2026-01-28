@@ -31,21 +31,23 @@ fun DeviceScreen(
 ) {
     val isConnected by viewModel.isConnected.collectAsState()
 
-    // BLE Permissions
-    val blePermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        listOf(
-            Manifest.permission.BLUETOOTH_SCAN,
-            Manifest.permission.BLUETOOTH_CONNECT
-        )
-    } else {
-        listOf(
-            Manifest.permission.BLUETOOTH,
-            Manifest.permission.BLUETOOTH_ADMIN,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        )
+    // BLE and Notification Permissions
+    val permissions = buildList {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            add(Manifest.permission.BLUETOOTH_SCAN)
+            add(Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            add(Manifest.permission.BLUETOOTH)
+            add(Manifest.permission.BLUETOOTH_ADMIN)
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        // Notification permission for Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            add(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 
-    val permissionState = rememberMultiplePermissionsState(blePermissions)
+    val permissionState = rememberMultiplePermissionsState(permissions)
 
     LaunchedEffect(Unit) {
         if (!permissionState.allPermissionsGranted) {

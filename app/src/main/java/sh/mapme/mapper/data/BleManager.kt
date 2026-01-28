@@ -10,6 +10,7 @@ import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import sh.mapme.mapper.*
+import sh.mapme.mapper.service.MapperService
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.*
@@ -224,6 +225,10 @@ class BleManager(private val context: Context) {
         stopScanning()
         lastConnectedDevice = device
         log("BLE", "Connecting to ${device.name ?: device.address}...", "blue")
+
+        // Start foreground service for background operation
+        MapperService.start(context)
+
         connectInternal(device)
     }
 
@@ -254,6 +259,10 @@ class BleManager(private val context: Context) {
         _deviceInfo.value = null
         resetSessionStats()
         isFirstConnect = true  // Reset for next connection
+
+        // Stop foreground service
+        MapperService.stop(context)
+
         log("BLE", "Disconnected", "orange")
     }
 

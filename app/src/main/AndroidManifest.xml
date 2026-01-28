@@ -16,6 +16,11 @@
     <!-- Network -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Foreground Service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- BLE Feature -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
@@ -39,6 +44,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Foreground Service for background operation -->
+        <service
+            android:name=".service.MapperService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice|location" />
 
     </application>
 
