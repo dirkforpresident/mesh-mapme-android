@@ -991,9 +991,10 @@ class BleManager(private val context: Context) {
                 return
             } else if (code == 0x01 && rxBuffer.size <= 2 && (lastFragmentSize < 20 || bufferTimedOut)) {
                 // ERR response: 1 byte (just 0x01) or 2 bytes (0x01 + error code)
+                // iOS ignores these - they're normal responses to channel messages
                 val errCode = if (rxBuffer.size >= 2) rxBuffer[1].toInt() and 0xFF else 0
-                Log.d(TAG, "ERR response (code=$errCode)")
-                log("RX", "Error: $errCode", "red")
+                Log.d(TAG, "ERR response (code=$errCode, bytes=${rxBuffer.toHexString()}) - ignored like iOS")
+                // Don't show in UI - iOS doesn't either
                 rxBuffer = byteArrayOf()
                 return
             } else if (rxBuffer.size < 10 && (lastFragmentSize < 20 || bufferTimedOut)) {
