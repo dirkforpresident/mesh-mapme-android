@@ -543,21 +543,23 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                                 }
                             }
 
-                            // Ping button
-                            if (coverageChannelReady) {
-                                Button(
-                                    onClick = { viewModel.sendPing() },
-                                    enabled = pingCooldown == 0 && viewModel.canSendPing(),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.tertiary
-                                    ),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    if (pingCooldown > 0) {
-                                        Text("PING (${pingCooldown}s)")
-                                    } else {
-                                        Text("PING H3")
-                                    }
+                            // Ping button - show why disabled
+                            val currentH3 = viewModel.currentH3.collectAsState().value
+                            val canPing = coverageChannelReady && currentH3 != null && pingCooldown == 0
+
+                            Button(
+                                onClick = { viewModel.sendPing() },
+                                enabled = canPing,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.tertiary
+                                ),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                when {
+                                    !coverageChannelReady -> Text("NO CHANNEL")
+                                    currentH3 == null -> Text("NO GPS")
+                                    pingCooldown > 0 -> Text("PING (${pingCooldown}s)")
+                                    else -> Text("PING H3")
                                 }
                             }
                         }
