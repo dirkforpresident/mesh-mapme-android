@@ -732,14 +732,17 @@ class BleManager(private val context: Context) {
 
     private fun sendChannelMessage(channelIdx: Int, message: String) {
         // SendChannelTxtMsg: [0x03][channelIdx: 1 byte][message bytes...]
+        Log.d(TAG, "sendChannelMessage(idx=$channelIdx, msg=$message)")
         if (!_coverageChannelReady.value) {
-            Log.e(TAG, "Cannot send channel message - coverage channel not ready")
+            Log.e(TAG, "BLOCKED: coverage channel not ready!")
             log("TX", "Channel not ready", "red")
             return
         }
         val payload = byteArrayOf(channelIdx.toByte()) + message.toByteArray()
+        val fullCommand = byteArrayOf(CommandCode.SEND_CHANNEL_TXT_MSG.value) + payload
+        Log.d(TAG, "TX bytes: ${fullCommand.toHexString()}")
         sendCommand(CommandCode.SEND_CHANNEL_TXT_MSG, payload)
-        Log.d(TAG, "Channel message sent (idx: $channelIdx, msg: $message, ${payload.size + 1} bytes)")
+        Log.d(TAG, "Channel message sent OK (idx: $channelIdx, ${fullCommand.size} bytes)")
     }
 
     // MARK: - TX Timers (only in LIVE mode)
@@ -855,20 +858,31 @@ class BleManager(private val context: Context) {
     }
 
     fun sendManualPing() {
+        Log.d(TAG, "=== MANUAL PING START ===")
+        Log.d(TAG, "  privacyMode: ${_privacyMode.value}")
+        Log.d(TAG, "  isConnected: ${_isConnected.value}")
+        Log.d(TAG, "  coverageChannelReady: ${_coverageChannelReady.value}")
+        Log.d(TAG, "  coverageChannelIndex: $coverageChannelIndex")
+        Log.d(TAG, "  currentH3: $currentH3")
+        Log.d(TAG, "  cooldownRemaining: $manualPingCooldownRemaining s")
+
         if (!canSendManualPing()) {
             Log.d(TAG, "Manual ping blocked - cooldown: $manualPingCooldownRemaining s")
+            log("TX", "Ping blocked (cooldown)", "orange")
             return
         }
         val h3 = currentH3 ?: run {
             Log.d(TAG, "Manual ping blocked - no GPS")
+            log("TX", "Ping blocked (no GPS)", "red")
             return
         }
 
+        Log.d(TAG, "Sending to channel $coverageChannelIndex: $h3")
         sendChannelMessage(coverageChannelIndex, h3)
         lastManualPingTime = Date()
         _txCount.value++
         log("TX", "Manual ping #${_txCount.value}", "orange")
-        Log.d(TAG, "Manual ping sent: $h3")
+        Log.d(TAG, "=== MANUAL PING DONE ===")
     }
 
     // MARK: - RX (Receive data)
