@@ -347,7 +347,7 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                                     )
                                 )
                                 // Battery chip
-                                if (batteryPercent > 0) {
+                                if (batteryPercent >= 0) {
                                     AssistChip(
                                         onClick = {},
                                         label = {
@@ -409,7 +409,7 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                         }
 
                         // Battery info
-                        if (batteryPercent > 0) {
+                        if (batteryPercent >= 0) {
                             DetailRow("Battery", "$batteryPercent% (${batteryMillivolts}mV)")
                         }
                     }
