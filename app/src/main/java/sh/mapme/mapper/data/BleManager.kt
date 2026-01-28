@@ -134,6 +134,10 @@ class BleManager(private val context: Context) {
     private var lastManualPingTime: Date? = null
     private var lastManualDiscoverTime: Date? = null
 
+    // TX confirmation tracking
+    private var pendingTx: Boolean = false
+    private var pendingTxTimeout: Job? = null
+
     // Timer jobs for auto-discovery and coverage TX (only in LIVE mode)
     private var discoverTimerJob: Job? = null
     private var coverageTxDelayJob: Job? = null
@@ -774,6 +778,17 @@ class BleManager(private val context: Context) {
         Log.d(TAG, "TX bytes: ${fullCommand.toHexString()}")
         sendCommand(CommandCode.SEND_CHANNEL_TXT_MSG, payload)
         Log.d(TAG, "Channel message sent OK (idx: $channelIdx, ${fullCommand.size} bytes)")
+
+        // Start waiting for TX confirmation (our message bounced back from repeater)
+        pendingTx = true
+        pendingTxTimeout?.cancel()
+        pendingTxTimeout = scope.launch {
+            delay(10000)  // 10s timeout
+            if (pendingTx) {
+                pendingTx = false
+                Log.d(TAG, "TX confirmation timeout - no repeater response")
+            }
+        }
     }
 
     // MARK: - TX Timers (only in LIVE mode)
@@ -1510,7 +1525,18 @@ class BleManager(private val context: Context) {
                 byteArrayOf()
             }
 
-            Log.d(TAG, "LogRxData: rssi=$rssi snr=$snr path=${path.joinToString("→")} payload=${payload.size}B")
+            // Get payload type from header: (header >> 2) & 0x0F
+            val payloadType = (header shr 2) and 0x0F
+            Log.d(TAG, "LogRxData: rssi=$rssi snr=$snr path=${path.joinToString("→")} payloadType=$payloadType payload=${payload.size}B")
+
+            // Check if this is our TX bounced back from a repeater (GRP_TXT = 0x05)
+            if (pendingTx && payloadType == 0x05 && path.isNotEmpty()) {
+                pendingTx = false
+                pendingTxTimeout?.cancel()
+                val repeater = path.last()  // Last hop is the repeater that sent it back
+                Log.d(TAG, "=== TX CONFIRMED by repeater $repeater @ $rssi dBm ===")
+                log("TX", "✓ via $repeater ($rssi dBm)", "green")
+            }
 
             // Check if payload is an Advert (min 101 bytes: 32 pubkey + 4 timestamp + 64 sig + 1 flags)
             if (payload.size >= 101) {
