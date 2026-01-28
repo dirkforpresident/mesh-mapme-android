@@ -15,6 +15,8 @@ import sh.mapme.mapper.util.FeedbackManager
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.*
+import javax.crypto.Cipher
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * BleManager.kt - Direct port of BLEManager.swift
@@ -25,6 +27,7 @@ class BleManager(private val context: Context) {
 
     companion object {
         private const val TAG = "BleManager"
+        private const val TX_SIGNATURE = "=]"  // Signature to verify our own TX bounced back
     }
 
     // Bluetooth components
@@ -984,12 +987,13 @@ class BleManager(private val context: Context) {
 
     private fun sendCoverageMessage() {
         if (!_isConnected.value || !_coverageChannelReady.value) return
-        val h3 = currentH3 ?: run {
+        if (currentH3 == null) {
             Log.d(TAG, "No GPS - skipping coverage message")
             return
         }
 
-        sendChannelMessage(coverageChannelIndex, h3)
+        // Send TX_SIGNATURE so we can verify our own message when it bounces back
+        sendChannelMessage(coverageChannelIndex, TX_SIGNATURE)
         _txCount.value++
         lastTxTime = Date()
         log("TX", "Auto TX #${_txCount.value}", "orange")
@@ -1009,17 +1013,18 @@ class BleManager(private val context: Context) {
             log("TX", "Ping blocked (cooldown)", "orange")
             return
         }
-        val h3 = currentH3 ?: run {
+        if (currentH3 == null) {
             Log.d(TAG, "Manual ping blocked - no GPS")
             log("TX", "Ping blocked (no GPS)", "red")
             return
         }
 
-        Log.d(TAG, "Sending to channel $coverageChannelIndex: $h3")
-        sendChannelMessage(coverageChannelIndex, h3)
+        // Send TX_SIGNATURE so we can verify our own message when it bounces back
+        Log.d(TAG, "Sending to channel $coverageChannelIndex: $TX_SIGNATURE")
+        sendChannelMessage(coverageChannelIndex, TX_SIGNATURE)
         lastManualPingTime = Date()
         _txCount.value++
-        log("TX", "Manual ping #${_txCount.value}", "orange")
+        log("TX", "Ping sent...", "orange")
         Log.d(TAG, "=== MANUAL PING DONE ===")
     }
 
@@ -1622,13 +1627,16 @@ class BleManager(private val context: Context) {
             Log.d(TAG, "LogRxData: rssi=$rssi snr=$snr path=${path.joinToString("→")} payloadType=$payloadType payload=${payload.size}B")
 
             // Check if this is our TX bounced back from a repeater (GRP_TXT = 0x05)
-            if (pendingTx && payloadType == 0x05 && path.isNotEmpty()) {
-                pendingTx = false
-                pendingTxTimeout?.cancel()
-                val repeater = path.last()  // Last hop is the repeater that sent it back
-                Log.d(TAG, "=== TX CONFIRMED by repeater $repeater @ $rssi dBm ===")
-                log("TX", "✓ via $repeater ($rssi dBm)", "green")
-                feedbackManager?.playTxConfirm()
+            // Decrypt the payload and verify it contains our signature
+            if (pendingTx && payloadType == 0x05 && path.isNotEmpty() && payload.isNotEmpty()) {
+                if (verifyTxResponse(payload)) {
+                    pendingTx = false
+                    pendingTxTimeout?.cancel()
+                    val repeater = path.last()  // Last hop is the repeater that sent it back
+                    Log.d(TAG, "=== TX CONFIRMED by repeater $repeater @ $rssi dBm ===")
+                    log("TX", "✓ via $repeater ($rssi dBm)", "green")
+                    feedbackManager?.playTxConfirm()
+                }
             }
 
             // Check if payload is an Advert (min 101 bytes: 32 pubkey + 4 timestamp + 64 sig + 1 flags)
@@ -1815,6 +1823,44 @@ class BleManager(private val context: Context) {
         val bytes = ByteArray(maxLength)
         buffer.get(bytes)
         return bytes.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
+    }
+
+    /**
+     * Decrypt a channel message payload using AES-ECB.
+     * Payload format: [1 byte skip][2 bytes skip][encrypted data...]
+     * Returns decrypted text or null if decryption fails.
+     */
+    private fun decryptChannelPayload(payload: ByteArray): String? {
+        try {
+            if (payload.size < 3) return null
+
+            // Skip first 3 bytes (1 byte + 2 bytes like connect.html)
+            val encrypted = payload.sliceArray(3 until payload.size)
+
+            // AES-ECB requires data to be multiple of 16 bytes
+            if (encrypted.isEmpty() || encrypted.size % 16 != 0) return null
+
+            val cipher = Cipher.getInstance("AES/ECB/NoPadding")
+            val keySpec = SecretKeySpec(sessionChannelKey, "AES")
+            cipher.init(Cipher.DECRYPT_MODE, keySpec)
+
+            val decrypted = cipher.doFinal(encrypted)
+            // Remove null padding and convert to string
+            return decrypted.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
+        } catch (e: Exception) {
+            Log.d(TAG, "Decrypt failed: ${e.message}")
+            return null
+        }
+    }
+
+    /**
+     * Verify if a received GRP_TXT payload is our own TX bounced back.
+     * Checks if decrypted content contains our TX_SIGNATURE.
+     */
+    private fun verifyTxResponse(payload: ByteArray): Boolean {
+        val decrypted = decryptChannelPayload(payload) ?: return false
+        Log.d(TAG, "Decrypted payload: '$decrypted'")
+        return decrypted.contains(TX_SIGNATURE)
     }
 
     private fun log(category: String, message: String, color: String) {
