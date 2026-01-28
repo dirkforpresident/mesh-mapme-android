@@ -138,6 +138,10 @@ class BleManager(private val context: Context) {
     private var pendingTx: Boolean = false
     private var pendingTxTimeout: Job? = null
 
+    // Write queue - Android BLE only allows one write at a time
+    private val writeQueue = mutableListOf<ByteArray>()
+    private var writeInProgress = false
+
     // Timer jobs for auto-discovery and coverage TX (only in LIVE mode)
     private var discoverTimerJob: Job? = null
     private var coverageTxDelayJob: Job? = null
@@ -230,6 +234,12 @@ class BleManager(private val context: Context) {
     fun disconnect() {
         // Stop all timers
         stopTxTimers()
+
+        // Clear write queue
+        synchronized(writeQueue) {
+            writeQueue.clear()
+            writeInProgress = false
+        }
 
         bluetoothGatt?.disconnect()
         bluetoothGatt?.close()
@@ -366,6 +376,20 @@ class BleManager(private val context: Context) {
                 }
             }
         }
+
+        override fun onCharacteristicWrite(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int
+        ) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.d(TAG, "Write completed successfully")
+            } else {
+                Log.e(TAG, "Write failed with status: $status")
+            }
+            // Process next queued write
+            processWriteQueue()
+        }
     }
 
     // MARK: - TX (Send data)
@@ -376,17 +400,26 @@ class BleManager(private val context: Context) {
     }
 
     private fun sendRawData(data: ByteArray) {
+        synchronized(writeQueue) {
+            if (writeInProgress) {
+                // Queue the write for later
+                writeQueue.add(data)
+                Log.d(TAG, "TX queued (${writeQueue.size} pending): ${data.toHexString()}")
+                return
+            }
+            writeInProgress = true
+        }
+        performWrite(data)
+    }
+
+    private fun performWrite(data: ByteArray) {
         val char = rxCharacteristic
         val gatt = bluetoothGatt
 
-        if (char == null) {
-            Log.e(TAG, "TX FAILED: rxCharacteristic is null")
-            log("TX", "Error: not connected", "red")
-            return
-        }
-        if (gatt == null) {
-            Log.e(TAG, "TX FAILED: bluetoothGatt is null")
-            log("TX", "Error: not connected", "red")
+        if (char == null || gatt == null) {
+            Log.e(TAG, "TX FAILED: not connected")
+            synchronized(writeQueue) { writeInProgress = false }
+            processWriteQueue()
             return
         }
 
@@ -398,7 +431,25 @@ class BleManager(private val context: Context) {
             Log.d(TAG, "TX: ${data.toHexString()}")
         } else {
             Log.e(TAG, "TX FAILED: writeCharacteristic returned false for ${data.toHexString()}")
-            log("TX", "Write failed", "red")
+            // Try next in queue
+            synchronized(writeQueue) { writeInProgress = false }
+            processWriteQueue()
+        }
+    }
+
+    private fun processWriteQueue() {
+        val nextData: ByteArray?
+        synchronized(writeQueue) {
+            if (writeQueue.isEmpty()) {
+                writeInProgress = false
+                return
+            }
+            nextData = writeQueue.removeAt(0)
+            writeInProgress = true
+        }
+        nextData?.let {
+            Log.d(TAG, "Processing queued write (${writeQueue.size} remaining)")
+            performWrite(it)
         }
     }
 
