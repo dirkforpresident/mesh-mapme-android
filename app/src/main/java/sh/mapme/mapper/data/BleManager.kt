@@ -92,6 +92,7 @@ class BleManager(private val context: Context) {
     // Auto-reconnect for verification
     private var lastConnectedDevice: BluetoothDevice? = null
     private var autoReconnectCount = 0  // Prevent infinite reconnect loops
+    private var isFirstConnect = true   // For automatic double-connect
 
     // Session token (for API uploads)
     private var _sessionToken: String? = null
@@ -233,6 +234,7 @@ class BleManager(private val context: Context) {
         _selfInfo.value = null
         _deviceInfo.value = null
         resetSessionStats()
+        isFirstConnect = true  // Reset for next connection
         log("BLE", "Disconnected", "orange")
     }
 
@@ -341,11 +343,46 @@ class BleManager(private val context: Context) {
             Log.d(TAG, "onDescriptorWrite called, status=$status, descriptor=${descriptor.uuid}")
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 log("BLE", "Notifications enabled", "green")
-                // Now send AppStart since notifications are properly set up
-                scope.launch {
-                    delay(200)
-                    Log.d(TAG, "Sending AppStart after descriptor write...")
-                    sendAppStart()
+
+                // Auto double-connect for better verification
+                if (isFirstConnect) {
+                    isFirstConnect = false
+                    scope.launch {
+                        Log.d(TAG, "First connect - will auto-reconnect for verification")
+                        log("BLE", "Preparing verify...", "blue")
+
+                        // Send AppStart to wake up device
+                        delay(200)
+                        sendAppStart()
+
+                        // Wait a moment then reconnect
+                        delay(1500)
+                        Log.d(TAG, "Auto-reconnecting for verification...")
+
+                        val device = lastConnectedDevice
+                        if (device != null) {
+                            // Quick disconnect
+                            bluetoothGatt?.disconnect()
+                            bluetoothGatt?.close()
+                            bluetoothGatt = null
+                            rxCharacteristic = null
+                            txCharacteristic = null
+                            appStartSent = false
+
+                            delay(500)
+
+                            // Reconnect (this is now the "second" connect)
+                            log("BLE", "Reconnecting...", "blue")
+                            bluetoothGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                        }
+                    }
+                } else {
+                    // Second connect - normal flow with signing
+                    scope.launch {
+                        delay(200)
+                        Log.d(TAG, "Second connect - sending AppStart for signing...")
+                        sendAppStart()
+                    }
                 }
             } else {
                 Log.e(TAG, "Descriptor write FAILED with status: $status")
