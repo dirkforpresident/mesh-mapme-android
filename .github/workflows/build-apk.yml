@@ -32,8 +32,28 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
+    - name: Decode Keystore
+      run: |
+        echo "${{ secrets.RELEASE_KEYSTORE }}" | base64 -d > app/mapme-release.keystore
+
     - name: Build Debug APK
       run: ./gradlew assembleDebug --stacktrace
+
+    - name: Build Release APK
+      run: ./gradlew assembleRelease --stacktrace
+      env:
+        RELEASE_STORE_FILE: mapme-release.keystore
+        RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+        RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+
+    - name: Build Release AAB (Play Store)
+      run: ./gradlew bundleRelease --stacktrace
+      env:
+        RELEASE_STORE_FILE: mapme-release.keystore
+        RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+        RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
 
     - name: Get version info
       id: version
@@ -43,16 +63,31 @@ jobs:
         echo "name=$VERSION_NAME" >> $GITHUB_OUTPUT
         echo "code=$VERSION_CODE" >> $GITHUB_OUTPUT
 
-    - name: Rename APK
+    - name: Rename APKs
       run: |
-        mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/mapme-mapper-v${{ steps.version.outputs.name }}-debug.apk
+        mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/mapme-mapper-v${{ steps.version.outputs.name }}-b${{ steps.version.outputs.code }}-debug.apk
+        mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/mapme-mapper-v${{ steps.version.outputs.name }}-b${{ steps.version.outputs.code }}-release.apk 2>/dev/null || true
 
-    - name: Upload APK as artifact
+    - name: Upload Debug APK
       uses: actions/upload-artifact@v4
       with:
-        name: mapme-mapper-apk
+        name: mapme-mapper-debug
         path: app/build/outputs/apk/debug/mapme-mapper-*.apk
         retention-days: 30
+
+    - name: Upload Release APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: mapme-mapper-release
+        path: app/build/outputs/apk/release/mapme-mapper-*.apk
+        retention-days: 90
+
+    - name: Upload Release AAB
+      uses: actions/upload-artifact@v4
+      with:
+        name: mapme-mapper-aab
+        path: app/build/outputs/bundle/release/*.aab
+        retention-days: 90
 
     - name: Create Release (on push to main)
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -60,14 +95,17 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         tag_name: build-${{ github.run_number }}
-        name: Build ${{ github.run_number }} (v${{ steps.version.outputs.name }})
+        name: Build ${{ steps.version.outputs.code }} (v${{ steps.version.outputs.name }})
         body: |
           Automatic build from commit ${{ github.sha }}
 
           **Changes:** ${{ github.event.head_commit.message }}
 
           Download the APK below and install on your Android device.
-        files: app/build/outputs/apk/debug/mapme-mapper-*.apk
+        files: |
+          app/build/outputs/apk/debug/mapme-mapper-*.apk
+          app/build/outputs/apk/release/mapme-mapper-*.apk
+          app/build/outputs/bundle/release/*.aab
         draft: false
         prerelease: true
       env:
