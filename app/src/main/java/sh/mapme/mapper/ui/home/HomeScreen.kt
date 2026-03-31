@@ -501,6 +501,7 @@ fun HomeScreen(
                         LinkRow("mapme.sh", "https://mapme.sh", context)
                         LinkRow("meshcore.co.uk", "https://meshcore.co.uk", context)
                         LinkRow("hansemesh.de", "https://hansemesh.de", context)
+                        LinkRow("elektronikreich.de", "https://elektronikreich.de", context)
                         LinkRow("Privacy Policy", "https://mapme.sh/privacy", context)
                     }
                 }
