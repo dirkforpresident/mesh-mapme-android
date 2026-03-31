@@ -2,7 +2,11 @@ package sh.mapme.mapper.ui.device
 
 import android.Manifest
 import android.bluetooth.BluetoothDevice
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -13,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -276,20 +281,57 @@ fun ConnectedScreen(viewModel: MainViewModel) {
     val batteryPercent by viewModel.batteryPercent.collectAsState()
     val batteryMillivolts by viewModel.batteryMillivolts.collectAsState()
 
-    var showDetails by remember { mutableStateOf(false) }
-    var showActivityLog by remember { mutableStateOf(false) }
-    var showSettings by remember { mutableStateOf(false) }
+    var showDetails by viewModel.showDeviceDetails
+    var showActivityLog by viewModel.showActivityLog
+    var showSettings by viewModel.showDeviceSettings
 
     // Feedback settings
     val feedbackManager = MapmeApp.instance.feedbackManager
     var soundEnabled by remember { mutableStateOf(feedbackManager.soundEnabled) }
     var vibrateEnabled by remember { mutableStateOf(feedbackManager.vibrateEnabled) }
 
+    // Battery optimization check
+    val context = LocalContext.current
+    var showBatteryDialog by remember { mutableStateOf(false) }
+
     // Auto-start GPS tracking when connected
     LaunchedEffect(Unit) {
         if (!isTracking) {
             viewModel.startTracking()
         }
+
+        // Check battery optimization on first connect
+        val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(context.packageName)) {
+            showBatteryDialog = true
+        }
+    }
+
+    // Battery optimization dialog
+    if (showBatteryDialog) {
+        AlertDialog(
+            onDismissRequest = { showBatteryDialog = false },
+            title = { Text("Background Operation") },
+            text = {
+                Text("For stable background mapping, please disable battery optimization for this app. This ensures GPS and Bluetooth stay active when the screen is off.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showBatteryDialog = false
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                    }
+                    context.startActivity(intent)
+                }) {
+                    Text("Open Settings")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatteryDialog = false }) {
+                    Text("Later")
+                }
+            }
+        )
     }
 
     LazyColumn(

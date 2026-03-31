@@ -30,6 +30,8 @@ fun HomeScreen(
     val isConnected by viewModel.isConnected.collectAsState()
     val liveMappers by viewModel.liveMappers.collectAsState()
     val leaderboard by viewModel.leaderboard.collectAsState()
+    val ownRank by viewModel.ownRank.collectAsState()
+    val selfInfo by viewModel.selfInfo.collectAsState()
     val isLoadingHexes by viewModel.isLoadingHexes.collectAsState()
 
     var showAllMappers by remember { mutableStateOf(false) }
@@ -257,7 +259,7 @@ fun HomeScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Top Mappers (Leaderboard)",
+                                    text = "Leaderboard",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.primary
                                 )
@@ -269,10 +271,60 @@ fun HomeScreen(
                         }
 
                         if (showLeaderboard) {
-                            leaderboard.take(10).forEach { entry ->
+                            // Own rank highlight
+                            ownRank?.let { rank ->
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = if (rank.rank != null) "#${rank.rank}" else "--",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Column {
+                                                Text(
+                                                    text = "Your Ranking",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                                )
+                                                Text(
+                                                    text = "${rank.points} pts / ${rank.hexes} hexes",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+
+                            // Get own pubkey for highlighting
+                            val ownPubkey = selfInfo?.publicKey?.joinToString("") { "%02x".format(it) }
+
+                            // Full leaderboard list
+                            leaderboard.forEach { entry ->
+                                val isOwnEntry = ownPubkey != null && entry.id == ownPubkey
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .then(
+                                            if (isOwnEntry) Modifier.padding(horizontal = 0.dp)
+                                            else Modifier
+                                        )
                                         .padding(vertical = 4.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
@@ -281,13 +333,14 @@ fun HomeScreen(
                                             text = "#${entry.rank}",
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontWeight = FontWeight.Bold,
-                                            color = when (entry.rank) {
-                                                1 -> Color(0xFFFFD700)
-                                                2 -> Color(0xFFC0C0C0)
-                                                3 -> Color(0xFFCD7F32)
+                                            color = when {
+                                                entry.rank == 1 -> Color(0xFFFFD700)
+                                                entry.rank == 2 -> Color(0xFFC0C0C0)
+                                                entry.rank == 3 -> Color(0xFFCD7F32)
+                                                isOwnEntry -> MaterialTheme.colorScheme.primary
                                                 else -> MaterialTheme.colorScheme.onSurface
                                             },
-                                            modifier = Modifier.width(32.dp)
+                                            modifier = Modifier.width(40.dp)
                                         )
                                         if (entry.online) {
                                             Surface(
@@ -299,13 +352,18 @@ fun HomeScreen(
                                         }
                                         Text(
                                             text = entry.name ?: entry.id.take(8),
-                                            style = MaterialTheme.typography.bodyMedium
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = if (isOwnEntry) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isOwnEntry) MaterialTheme.colorScheme.primary
+                                                    else MaterialTheme.colorScheme.onSurface
                                         )
                                     }
                                     Text(
                                         text = "${entry.hexes} pts",
                                         style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isOwnEntry) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurface
                                     )
                                 }
                             }

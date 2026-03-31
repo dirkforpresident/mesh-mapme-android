@@ -1,6 +1,7 @@
 package sh.mapme.mapper
 
 import android.bluetooth.BluetoothDevice
+import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.*
@@ -49,7 +50,16 @@ class MainViewModel : ViewModel() {
     val serverHexes = hexService.serverHexes
     val liveMappers = hexService.liveMappers
     val leaderboard = hexService.leaderboard
+    val ownRank = hexService.ownRank
     val isLoadingHexes = hexService.isLoading
+
+    // Persistent UI state (survives tab switches)
+    val showActivityLog = mutableStateOf(false)
+    val showDeviceDetails = mutableStateOf(false)
+    val showDeviceSettings = mutableStateOf(false)
+    val mapFollowLocation = MutableStateFlow(true)
+    val mapUseDarkMode = MutableStateFlow(true)
+    val mapHasInitialLocation = mutableStateOf(false)
 
     init {
         // Fetch initial data
@@ -63,6 +73,16 @@ class MainViewModel : ViewModel() {
             currentLocation.collect { location ->
                 location?.let {
                     hexService.fetchHexes(it.latitude, it.longitude)
+                }
+            }
+        }
+
+        // Fetch own rank when selfInfo becomes available (has pubkey)
+        viewModelScope.launch {
+            selfInfo.collect { info ->
+                info?.publicKey?.let { pk ->
+                    val pubkeyHex = pk.joinToString("") { "%02x".format(it) }
+                    hexService.fetchOwnRank(pubkeyHex)
                 }
             }
         }

@@ -20,12 +20,14 @@ import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import android.view.MotionEvent
 import sh.mapme.mapper.MainViewModel
 import sh.mapme.mapper.MapmeApp
+import sh.mapme.mapper.data.HexColor
 import java.io.File
 
 @OptIn(ExperimentalPermissionsApi::class)
@@ -44,9 +46,9 @@ fun MapScreen(
     val batteryMillivolts by viewModel.batteryMillivolts.collectAsState()
 
     var showStats by remember { mutableStateOf(true) }
-    var useDarkMap by remember { mutableStateOf(true) }
+    val useDarkMap by viewModel.mapUseDarkMode.collectAsState()
     var showActivityFeed by remember { mutableStateOf(false) }
-    var followLocation by remember { mutableStateOf(true) }
+    val followLocation by viewModel.mapFollowLocation.collectAsState()
 
     // Location permission
     val locationPermissions = rememberMultiplePermissionsState(
@@ -79,18 +81,18 @@ fun MapScreen(
     // Default to Hamburg if no location
     val defaultLocation = GeoPoint(53.5511, 9.9937)
 
-    // Session hex data for tracking strongest signal
+    // Session hex data: H3 -> (repeaterName, bestRSSI)
     val sessionHexData = remember { mutableStateMapOf<String, Pair<String, Int>>() }
 
-    // Update session hex data when RX packets come in
+    // Update session hex data when RX packets come in — use H3 captured at reception time
     LaunchedEffect(recentRxPackets) {
         recentRxPackets.firstOrNull()?.let { packet ->
-            val currentH3 = viewModel.currentH3.value ?: return@let
+            val hexId = packet.h3 ?: return@let
             val lastHop = packet.path.lastOrNull() ?: return@let
 
-            val existing = sessionHexData[currentH3]
+            val existing = sessionHexData[hexId]
             if (existing == null || packet.rssi > existing.second) {
-                sessionHexData[currentH3] = Pair(lastHop, packet.rssi)
+                sessionHexData[hexId] = Pair(lastHop, packet.rssi)
             }
         }
     }
@@ -144,11 +146,10 @@ fun MapScreen(
     }
 
     // Follow user location on map
-    var hasInitialLocation by remember { mutableStateOf(false) }
     LaunchedEffect(currentLocation, followLocation) {
         currentLocation?.let { loc ->
-            if (!hasInitialLocation) {
-                hasInitialLocation = true
+            if (!viewModel.mapHasInitialLocation.value) {
+                viewModel.mapHasInitialLocation.value = true
                 mapView.controller.setZoom(16.0)
             }
             if (followLocation) {
@@ -160,8 +161,8 @@ fun MapScreen(
     // Update hex overlays
     LaunchedEffect(serverHexes, visitedHexes, sessionHexData.keys.toList()) {
         try {
-            // Remove old polygon overlays (keep location overlay)
-            mapView.overlays.removeAll { it is Polygon }
+            // Remove old polygon and marker overlays (keep location overlay)
+            mapView.overlays.removeAll { it is Polygon || it is Marker }
 
             // Server hexes (from API)
             serverHexes.forEach { hex ->
@@ -189,29 +190,70 @@ fun MapScreen(
                 } catch (e: Exception) { /* skip invalid hex */ }
             }
 
-            // Session hexes (visited this session)
+            // Session hexes (visited this session) — RSSI-based colors matching web
             visitedHexes.forEach { hexId ->
                 try {
                     val boundary = MapmeApp.instance.locationService.getH3Boundary(hexId)
                     boundary?.let { coords ->
-                        val hasSignal = sessionHexData.containsKey(hexId)
+                        val signalData = sessionHexData[hexId]
+                        val hexColor = if (signalData != null) {
+                            HexColor.fromRssi(signalData.second)
+                        } else {
+                            HexColor.VISITED
+                        }
                         val polygon = Polygon().apply {
                             points = coords.map { GeoPoint(it.first, it.second) }
-                            fillPaint.color = if (hasSignal) {
-                                AndroidColor.argb(77, 0, 255, 0) // Green with alpha
-                            } else {
-                                AndroidColor.argb(51, 0, 0, 255) // Blue with alpha
-                            }
-                            outlinePaint.color = if (hasSignal) {
-                                AndroidColor.GREEN
-                            } else {
-                                AndroidColor.BLUE
-                            }
+                            fillPaint.color = AndroidColor.argb(
+                                if (signalData != null) 128 else 77,
+                                (hexColor.r * 255).toInt(),
+                                (hexColor.g * 255).toInt(),
+                                (hexColor.b * 255).toInt()
+                            )
+                            outlinePaint.color = AndroidColor.rgb(
+                                (hexColor.r * 255).toInt(),
+                                (hexColor.g * 255).toInt(),
+                                (hexColor.b * 255).toInt()
+                            )
                             outlinePaint.strokeWidth = 3f
                         }
                         mapView.overlays.add(polygon)
                     }
                 } catch (e: Exception) { /* skip invalid hex */ }
+            }
+
+            // Add repeater name labels on hexes with signal
+            sessionHexData.forEach { (hexId, data) ->
+                try {
+                    val (repeaterName, _) = data
+                    val center = MapmeApp.instance.locationService.getH3Center(hexId)
+                    center?.let { (lat, lon) ->
+                        // Create text bitmap for label
+                        val paint = android.graphics.Paint().apply {
+                            color = AndroidColor.WHITE
+                            textSize = 28f
+                            isAntiAlias = true
+                            setShadowLayer(3f, 1f, 1f, AndroidColor.BLACK)
+                            textAlign = android.graphics.Paint.Align.CENTER
+                        }
+                        val textWidth = paint.measureText(repeaterName).toInt() + 16
+                        val textHeight = 36
+                        val bitmap = android.graphics.Bitmap.createBitmap(
+                            textWidth, textHeight, android.graphics.Bitmap.Config.ARGB_8888
+                        )
+                        val canvas = android.graphics.Canvas(bitmap)
+                        canvas.drawText(repeaterName, textWidth / 2f, 26f, paint)
+
+                        val marker = Marker(mapView).apply {
+                            position = GeoPoint(lat, lon)
+                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                            icon = android.graphics.drawable.BitmapDrawable(
+                                mapView.context.resources, bitmap
+                            )
+                            setInfoWindow(null)
+                        }
+                        mapView.overlays.add(marker)
+                    }
+                } catch (e: Exception) { /* skip */ }
             }
 
             mapView.invalidate()
@@ -225,7 +267,7 @@ fun MapScreen(
                 mapView.apply {
                     setOnTouchListener { _, event ->
                         if (event.action == MotionEvent.ACTION_MOVE) {
-                            followLocation = false
+                            viewModel.mapFollowLocation.value = false
                         }
                         false
                     }
@@ -366,14 +408,13 @@ fun MapScreen(
                 .align(Alignment.TopEnd),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Toggle follow location
+            // Toggle follow location — keep current zoom
             Card(
                 modifier = Modifier
                     .clickable {
-                        followLocation = true
+                        viewModel.mapFollowLocation.value = true
                         currentLocation?.let {
                             mapView.controller.animateTo(GeoPoint(it.latitude, it.longitude))
-                            mapView.controller.setZoom(16.0)
                         }
                     },
                 colors = CardDefaults.cardColors(
@@ -396,7 +437,7 @@ fun MapScreen(
             // Map style toggle
             Card(
                 modifier = Modifier
-                    .clickable { useDarkMap = !useDarkMap },
+                    .clickable { viewModel.mapUseDarkMode.value = !viewModel.mapUseDarkMode.value },
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
                 )
@@ -465,9 +506,10 @@ fun StatRow(
 @Composable
 fun rssiColor(rssi: Int): Color {
     return when {
-        rssi > -80 -> Color(0xFF22C55E) // Green
-        rssi > -100 -> Color(0xFF84CC16) // Lime
-        rssi > -115 -> Color(0xFFF97316) // Orange
-        else -> Color(0xFFEF4444) // Red
+        rssi > -80 -> Color(0xFF22C55E)  // Excellent — green
+        rssi > -100 -> Color(0xFF84CC16) // Good — lime
+        rssi > -115 -> Color(0xFFEAB308) // OK — yellow
+        rssi > -125 -> Color(0xFFF59E0B) // Weak — amber
+        else -> Color(0xFF6B7280)        // Marginal — gray
     }
 }

@@ -103,10 +103,15 @@ class BleManager(private val context: Context) {
     private var signingRetryCount = 0  // Retry counter for signing
     private var appStartSent = false  // Prevent duplicate AppStart
 
-    // Auto-reconnect for verification
+    // Auto-reconnect
     private var lastConnectedDevice: BluetoothDevice? = null
     private var autoReconnectCount = 0  // Prevent infinite reconnect loops
     private var isFirstConnect = true   // For automatic double-connect
+    private var intentionalDisconnect = false
+    private var reconnectJob: Job? = null
+    private val _isReconnecting = MutableStateFlow(false)
+    val isReconnecting: StateFlow<Boolean> = _isReconnecting.asStateFlow()
+    private val reconnectDelays = listOf(2000L, 5000L, 10000L, 20000L, 30000L)
 
     // Session token (for API uploads)
     private var _sessionToken: String? = null
@@ -117,7 +122,8 @@ class BleManager(private val context: Context) {
         val timestamp: Date,
         val path: List<String>,
         val rssi: Int,
-        val snr: Float
+        val snr: Float,
+        val h3: String? = null
     )
 
     private val _recentRxPackets = MutableStateFlow<List<RxPacket>>(emptyList())
@@ -166,6 +172,9 @@ class BleManager(private val context: Context) {
 
     // Sample store reference
     var sampleRepository: SampleRepository? = null
+
+    // Hex service for API calls (node uploads)
+    var hexService: HexService? = null
 
     // Feedback manager for audio/haptic feedback
     var feedbackManager: FeedbackManager? = null
@@ -240,6 +249,9 @@ class BleManager(private val context: Context) {
     fun connect(device: BluetoothDevice) {
         stopScanning()
         lastConnectedDevice = device
+        intentionalDisconnect = false
+        reconnectJob?.cancel()
+        _isReconnecting.value = false
         log("BLE", "Connecting to ${device.name ?: device.address}...", "blue")
 
         // Start foreground service for background operation
@@ -253,6 +265,10 @@ class BleManager(private val context: Context) {
     }
 
     fun disconnect() {
+        intentionalDisconnect = true
+        reconnectJob?.cancel()
+        _isReconnecting.value = false
+
         // Stop all timers
         stopTxTimers()
         stopBatteryTimer()
@@ -283,6 +299,53 @@ class BleManager(private val context: Context) {
         MapperService.stop(context)
 
         log("BLE", "Disconnected", "orange")
+    }
+
+    private fun attemptReconnect() {
+        val device = lastConnectedDevice ?: return
+        reconnectJob?.cancel()
+        _isReconnecting.value = true
+
+        reconnectJob = scope.launch {
+            for ((attempt, delayMs) in reconnectDelays.withIndex()) {
+                if (intentionalDisconnect || _isConnected.value) break
+
+                Log.d(TAG, "Reconnect attempt ${attempt + 1}/${reconnectDelays.size} in ${delayMs}ms")
+                log("BLE", "Reconnect ${attempt + 1}/${reconnectDelays.size}...", "orange")
+
+                delay(delayMs)
+                if (intentionalDisconnect || _isConnected.value) break
+
+                // Clean up old GATT
+                bluetoothGatt?.close()
+                bluetoothGatt = null
+
+                try {
+                    connectInternal(device)
+                    // Wait for connection callback
+                    delay(5000)
+                    if (_isConnected.value) {
+                        Log.d(TAG, "Reconnect successful!")
+                        log("BLE", "Reconnected!", "green")
+                        feedbackManager?.playConnected()
+                        _isReconnecting.value = false
+                        return@launch
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Reconnect attempt failed", e)
+                }
+            }
+
+            // All attempts failed
+            if (!_isConnected.value && !intentionalDisconnect) {
+                Log.d(TAG, "All reconnect attempts failed")
+                log("BLE", "Reconnect failed", "red")
+                _isReconnecting.value = false
+                scope.launch(Dispatchers.Main) {
+                    disconnect()
+                }
+            }
+        }
     }
 
     // Current MTU (default is 23, but we request higher)
@@ -317,9 +380,16 @@ class BleManager(private val context: Context) {
                     }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.d(TAG, "Disconnected from GATT server")
-                    scope.launch(Dispatchers.Main) {
-                        disconnect()
+                    Log.d(TAG, "Disconnected from GATT server (intentional=$intentionalDisconnect)")
+                    if (!intentionalDisconnect && sh.mapme.mapper.service.MapperService.isRunning) {
+                        // Unexpected disconnect while service is running — try to reconnect
+                        _isConnected.value = false
+                        log("BLE", "Connection lost, reconnecting...", "orange")
+                        attemptReconnect()
+                    } else {
+                        scope.launch(Dispatchers.Main) {
+                            disconnect()
+                        }
                     }
                 }
             }
@@ -1712,12 +1782,13 @@ class BleManager(private val context: Context) {
                 parseAdvertFromPayload(payload, rssi, path)
             }
 
-            // Create RX packet
+            // Create RX packet — capture H3 at time of reception
             val packet = RxPacket(
                 timestamp = Date(),
                 path = path,
                 rssi = rssi,
-                snr = snr
+                snr = snr,
+                h3 = currentH3
             )
 
             val currentPackets = _recentRxPackets.value.toMutableList()
@@ -1809,7 +1880,21 @@ class BleManager(private val context: Context) {
                 log("RX", "$typeName: $displayName ($rssi dBm)", "blue")
             }
 
-            // TODO: Upload advert to server
+            // Upload node to server
+            val uploadLat = if (hasLatLon && lat != 0.0) lat else context?.let {
+                MapmeApp.instance.locationService.currentLocation.value?.latitude
+            }
+            val uploadLon = if (hasLatLon && lon != 0.0) lon else context?.let {
+                MapmeApp.instance.locationService.currentLocation.value?.longitude
+            }
+            hexService?.uploadNode(
+                pubkey = pubkeyHex,
+                type = nodeType,
+                name = displayName,
+                lat = uploadLat,
+                lon = uploadLon,
+                sessionToken = _sessionToken
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse Advert from payload", e)
         }
@@ -1929,6 +2014,17 @@ class BleManager(private val context: Context) {
         log("RX", "DISC: $shortId (${rssi}dBm, ${snr}dB)", "green")
         feedbackManager?.playDiscoverReply()
 
+        // Upload repeater contact to server
+        val loc = MapmeApp.instance.locationService.currentLocation.value
+        hexService?.uploadNode(
+            pubkey = pubkeyHex,
+            type = 2,  // Repeater
+            name = shortId,
+            lat = loc?.latitude,
+            lon = loc?.longitude,
+            sessionToken = _sessionToken
+        )
+
         // Add sample for upload
         currentH3?.let { h3 ->
             val sample = Sample(
@@ -1980,10 +2076,16 @@ class BleManager(private val context: Context) {
     }
 
     private fun uploadAdvert(type: Int, nodeId: ByteArray, fullData: ByteArray) {
-        // TODO: Implement API upload
-        scope.launch {
-            // Upload to mapme.sh API
-        }
+        val nodeIdHex = nodeId.joinToString("") { "%02x".format(it) }
+        val loc = MapmeApp.instance.locationService.currentLocation.value
+        hexService?.uploadNode(
+            pubkey = nodeIdHex,
+            type = type,
+            name = nodeIdHex.take(8),
+            lat = loc?.latitude,
+            lon = loc?.longitude,
+            sessionToken = _sessionToken
+        )
     }
 
     // MARK: - Helpers

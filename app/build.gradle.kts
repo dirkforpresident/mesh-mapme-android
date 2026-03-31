@@ -11,7 +11,7 @@ android {
         applicationId = "sh.mapme.mapper"
         minSdk = 26
         targetSdk = 34
-        versionCode = 60
+        versionCode = 66
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -107,6 +107,9 @@ dependencies {
 
     // Permissions
     implementation("com.google.accompanist:accompanist-permissions:0.34.0")
+
+    // Android Auto
+    implementation("androidx.car.app:app:1.4.0")
 
     // Testing
     testImplementation("junit:junit:4.13.2")

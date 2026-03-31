@@ -43,6 +43,7 @@ class MapmeApp : Application() {
         sampleRepository.hexService = hexService
         sampleRepository.bleManager = bleManager
         bleManager.sampleRepository = sampleRepository
+        bleManager.hexService = hexService
 
         // Location -> BLE H3 updates
         locationService.onH3Update = { h3 ->

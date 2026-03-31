@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationCompat
@@ -35,6 +36,9 @@ class MapperService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "mapper_service_channel"
 
+        var isRunning = false
+            private set
+
         fun start(context: Context) {
             val intent = Intent(context, MapperService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -51,6 +55,7 @@ class MapperService : Service() {
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var updateJob: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -60,6 +65,13 @@ class MapperService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "Service started")
+        isRunning = true
+
+        // Acquire partial wake lock to keep CPU active for BLE + GPS
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "mapme:mapper").apply {
+            acquire()
+        }
 
         // Start as foreground service - use location type only if permission granted
         val hasLocationPermission = ContextCompat.checkSelfPermission(
@@ -68,7 +80,7 @@ class MapperService : Service() {
             this, android.Manifest.permission.ACCESS_COARSE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
 
-        val notification = createNotification(0, 0, false, "Starting...")
+        val notification = createNotification(0, 0, 0, false, "Starting...")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             var serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
             if (hasLocationPermission) {
@@ -89,8 +101,13 @@ class MapperService : Service() {
 
     override fun onDestroy() {
         Log.d(TAG, "Service destroyed")
+        isRunning = false
         updateJob?.cancel()
         scope.cancel()
+        wakeLock?.let {
+            if (it.isHeld) it.release()
+        }
+        wakeLock = null
         super.onDestroy()
     }
 
@@ -110,7 +127,13 @@ class MapperService : Service() {
         }
     }
 
-    private fun createNotification(rxCount: Int, txCount: Int, isConnected: Boolean, status: String): Notification {
+    private fun createNotification(
+        rxCount: Int,
+        txCount: Int,
+        hexCount: Int,
+        isConnected: Boolean,
+        status: String
+    ): Notification {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -121,7 +144,7 @@ class MapperService : Service() {
 
         val title = if (isConnected) "Mapme Mapper Active" else "Mapme Mapper"
         val text = if (isConnected) {
-            "RX: $rxCount | TX: $txCount | $status"
+            "RX: $rxCount | Hexes: $hexCount | $status"
         } else {
             status
         }
@@ -142,6 +165,7 @@ class MapperService : Service() {
         updateJob = scope.launch {
             val app = MapmeApp.instance
             val bleManager = app.bleManager
+            val locationService = app.locationService
 
             // Combine multiple flows to update notification
             combine(
@@ -149,9 +173,17 @@ class MapperService : Service() {
                 bleManager.rxCount,
                 bleManager.txCount,
                 bleManager.isTxActive,
-                bleManager.coverageChannelReady
-            ) { isConnected, rxCount, txCount, isTxActive, channelReady ->
-                NotificationData(isConnected, rxCount, txCount, isTxActive, channelReady)
+                bleManager.coverageChannelReady,
+                locationService.visitedHexes
+            ) { values ->
+                NotificationData(
+                    isConnected = values[0] as Boolean,
+                    rxCount = values[1] as Int,
+                    txCount = values[2] as Int,
+                    isTxActive = values[3] as Boolean,
+                    channelReady = values[4] as Boolean,
+                    hexCount = (values[5] as Set<*>).size
+                )
             }.collect { data ->
                 val status = when {
                     !data.isConnected -> "Disconnected"
@@ -163,6 +195,7 @@ class MapperService : Service() {
                 val notification = createNotification(
                     data.rxCount,
                     data.txCount,
+                    data.hexCount,
                     data.isConnected,
                     status
                 )
@@ -178,6 +211,7 @@ class MapperService : Service() {
         val rxCount: Int,
         val txCount: Int,
         val isTxActive: Boolean,
-        val channelReady: Boolean
+        val channelReady: Boolean,
+        val hexCount: Int
     )
 }

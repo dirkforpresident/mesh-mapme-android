@@ -25,6 +25,10 @@
     <!-- Feedback -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Background operation -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <!-- BLE Feature -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
@@ -55,6 +59,22 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="connectedDevice|location" />
+
+        <!-- Android Auto -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+
+        <service
+            android:name=".auto.MapmeCarAppService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.car.app.minCarApiLevel"
+                android:value="1" />
+        </service>
 
     </application>
 

@@ -43,6 +43,9 @@ class HexService {
     private val _leaderboard = MutableStateFlow<List<LeaderboardEntry>>(emptyList())
     val leaderboard: StateFlow<List<LeaderboardEntry>> = _leaderboard.asStateFlow()
 
+    private val _ownRank = MutableStateFlow<OwnRank?>(null)
+    val ownRank: StateFlow<OwnRank?> = _ownRank.asStateFlow()
+
     // Cache
     private var lastFetchLocation: Pair<Double, Double>? = null
     private var lastFetchTime: Long = 0
@@ -267,7 +270,7 @@ class HexService {
     fun fetchLeaderboard() {
         scope.launch {
             try {
-                val url = "${Constants.API_BASE_URL}/api/leaderboard"
+                val url = "${Constants.API_BASE_URL}/api/leaderboard?limit=100"
                 val request = Request.Builder()
                     .url(url)
                     .get()
@@ -277,11 +280,9 @@ class HexService {
                     if (response.isSuccessful) {
                         val body = response.body?.string() ?: "{}"
                         val entries = try {
-                            // Try parsing as wrapped response first
                             val wrapped = gson.fromJson(body, LeaderboardResponse::class.java)
                             wrapped.leaderboard ?: emptyList()
                         } catch (e: Exception) {
-                            // Fallback to direct array
                             try {
                                 gson.fromJson(body, Array<LeaderboardEntry>::class.java).toList()
                             } catch (e2: Exception) {
@@ -298,31 +299,68 @@ class HexService {
         }
     }
 
-    // MARK: - Upload Advert
-
-    fun uploadAdvert(type: Int, nodeId: ByteArray, data: ByteArray) {
+    fun fetchOwnRank(pubkey: String) {
+        if (pubkey.isBlank()) return
         scope.launch {
             try {
-                val url = "${Constants.API_BASE_URL}/api/adverts"
-                val payload = mapOf(
-                    "type" to type,
-                    "nodeId" to nodeId.toHexString(),
-                    "data" to data.toHexString()
-                )
-                val jsonBody = gson.toJson(payload)
+                val url = "${Constants.API_BASE_URL}/api/rank/$pubkey"
+                val request = Request.Builder().url(url).get().build()
+
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string() ?: "{}"
+                        val json = org.json.JSONObject(body)
+                        val rank = if (json.isNull("rank")) null else json.optInt("rank")
+                        val points = json.optInt("points", 0)
+                        val hexes = json.optInt("hexes", 0)
+                        _ownRank.value = OwnRank(rank, points, hexes)
+                        Log.d(TAG, "Own rank: #$rank ($points points, $hexes hexes)")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error fetching own rank", e)
+            }
+        }
+    }
+
+    // MARK: - Upload Node (repeater contacts, adverts)
+
+    fun uploadNode(
+        pubkey: String,
+        type: Int,
+        name: String,
+        lat: Double?,
+        lon: Double?,
+        sessionToken: String?
+    ) {
+        if (sessionToken == null) return
+        scope.launch {
+            try {
+                val url = "${Constants.API_BASE_URL}/api/node"
+                val body = org.json.JSONObject().apply {
+                    put("pk", pubkey)
+                    put("sid", pubkey.take(8))
+                    put("t", type)
+                    put("n", name)
+                    lat?.let { put("lat", it) }
+                    lon?.let { put("lon", it) }
+                }
 
                 val request = Request.Builder()
                     .url(url)
-                    .post(jsonBody.toRequestBody("application/json".toMediaType()))
+                    .post(body.toString().toRequestBody("application/json".toMediaType()))
+                    .addHeader("X-Session-Token", sessionToken)
                     .build()
 
                 client.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
-                        Log.d(TAG, "Uploaded advert type $type")
+                        Log.d(TAG, "Uploaded node: $name (type $type)")
+                    } else {
+                        Log.e(TAG, "Node upload failed: ${response.code}")
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error uploading advert", e)
+                Log.e(TAG, "Error uploading node", e)
             }
         }
     }
@@ -357,14 +395,9 @@ data class ServerHex(
     @SerializedName("lon") val lon: Double? = null,
     @SerializedName("elev") val elev: Int? = null
 ) {
-    // Generate color based on RSSI or visit status
+    // Generate color based on RSSI — 6-tier scale matching web (mapme.sh)
     fun getColor(): HexColor {
-        return when {
-            rssi != null && rssi > -80 -> HexColor.GOOD_SIGNAL
-            rssi != null -> HexColor.WEAK_SIGNAL
-            v != null && v > 0 -> HexColor.VISITED
-            else -> HexColor.DEFAULT
-        }
+        return HexColor.fromRssi(rssi)
     }
 }
 
@@ -374,10 +407,24 @@ data class HexColor(
     val b: Float
 ) {
     companion object {
-        val VISITED = HexColor(0.23f, 0.51f, 0.97f)     // Blue
-        val GOOD_SIGNAL = HexColor(0.13f, 0.77f, 0.37f) // Green
-        val WEAK_SIGNAL = HexColor(0.95f, 0.77f, 0.06f) // Yellow
-        val DEFAULT = HexColor(0.5f, 0.5f, 0.5f)        // Gray
+        // Exact colors from mapme.sh web frontend
+        val EXCELLENT = HexColor(0.133f, 0.773f, 0.369f)  // #22c55e — > -80 dBm
+        val GOOD = HexColor(0.518f, 0.800f, 0.086f)       // #84cc16 — > -100 dBm
+        val OK = HexColor(0.918f, 0.702f, 0.031f)         // #eab308 — > -115 dBm
+        val WEAK = HexColor(0.961f, 0.620f, 0.043f)       // #f59e0b — > -125 dBm
+        val MARGINAL = HexColor(0.420f, 0.447f, 0.498f)   // #6b7280 — <= -125 dBm
+        val VISITED = HexColor(0.216f, 0.255f, 0.318f)    // #374151 — no signal data
+
+        fun fromRssi(rssi: Int?): HexColor {
+            return when {
+                rssi != null && rssi > -80 -> EXCELLENT
+                rssi != null && rssi > -100 -> GOOD
+                rssi != null && rssi > -115 -> OK
+                rssi != null && rssi > -125 -> WEAK
+                rssi != null -> MARGINAL
+                else -> VISITED
+            }
+        }
     }
 }
 
@@ -409,4 +456,10 @@ data class LiveMappersResponse(
 
 data class HexesResponse(
     @SerializedName("hexes") val hexes: List<ServerHex>? = null
+)
+
+data class OwnRank(
+    val rank: Int?,
+    val points: Int,
+    val hexes: Int
 )
