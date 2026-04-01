@@ -44,6 +44,10 @@ fun MapScreen(
     val recentRxPackets by viewModel.recentRxPackets.collectAsState()
     val isTracking by viewModel.isTracking.collectAsState()
     val batteryMillivolts by viewModel.batteryMillivolts.collectAsState()
+    val isConnected by viewModel.isConnected.collectAsState()
+    val privacyMode by viewModel.privacyMode.collectAsState()
+    val coverageChannelReady by viewModel.coverageChannelReady.collectAsState()
+    val currentH3 by viewModel.currentH3.collectAsState()
 
     var showStats by remember { mutableStateOf(true) }
     val useDarkMap by viewModel.mapUseDarkMode.collectAsState()
@@ -78,17 +82,18 @@ fun MapScreen(
         }
     }
 
-    // Default to Hamburg if no location
-    val defaultLocation = GeoPoint(53.5511, 9.9937)
+    // Default to last known position (persisted) instead of hardcoded Hamburg
+    val locationService = MapmeApp.instance.locationService
+    val defaultLocation = GeoPoint(locationService.lastLat, locationService.lastLon)
 
     // Session hex data: H3 -> (repeaterName, bestRSSI)
     val sessionHexData = remember { mutableStateMapOf<String, Pair<String, Int>>() }
 
-    // Update session hex data when RX packets come in — use H3 captured at reception time
+    // Update session hex data when RX packets come in — process ALL packets, keep best RSSI per hex
     LaunchedEffect(recentRxPackets) {
-        recentRxPackets.firstOrNull()?.let { packet ->
-            val hexId = packet.h3 ?: return@let
-            val lastHop = packet.path.lastOrNull() ?: return@let
+        recentRxPackets.forEach { packet ->
+            val hexId = packet.h3 ?: return@forEach
+            val lastHop = packet.path.lastOrNull() ?: return@forEach
 
             val existing = sessionHexData[hexId]
             if (existing == null || packet.rssi > existing.second) {
@@ -265,9 +270,14 @@ fun MapScreen(
         AndroidView(
             factory = {
                 mapView.apply {
-                    setOnTouchListener { _, event ->
-                        if (event.action == MotionEvent.ACTION_MOVE) {
-                            viewModel.mapFollowLocation.value = false
+                    setOnTouchListener { view, event ->
+                        when (event.action and MotionEvent.ACTION_MASK) {
+                            MotionEvent.ACTION_MOVE -> {
+                                // Only disable follow if single-finger pan (not pinch-to-zoom)
+                                if (event.pointerCount == 1) {
+                                    viewModel.mapFollowLocation.value = false
+                                }
+                            }
                         }
                         false
                     }
@@ -447,6 +457,110 @@ fun MapScreen(
                     modifier = Modifier.padding(12.dp),
                     style = MaterialTheme.typography.titleMedium
                 )
+            }
+
+            // Coverage time filter
+            val coverageDays by viewModel.coverageDays.collectAsState()
+            Card(
+                modifier = Modifier
+                    .clickable {
+                        // Cycle: All -> 30d -> 7d -> All
+                        val next = when (coverageDays) {
+                            0 -> 30
+                            30 -> 7
+                            else -> 0
+                        }
+                        viewModel.setCoverageDays(next)
+                        // Re-fetch hexes with new filter
+                        currentLocation?.let {
+                            viewModel.hexService.fetchHexes(it.latitude, it.longitude)
+                        }
+                    },
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+                )
+            ) {
+                Text(
+                    text = when (coverageDays) {
+                        0 -> "All"
+                        7 -> "7d"
+                        30 -> "30d"
+                        else -> "${coverageDays}d"
+                    },
+                    modifier = Modifier.padding(12.dp),
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
+        }
+
+        // Discover/Ping buttons (bottom-right) — only when connected in live mode
+        if (isConnected && privacyMode == "live") {
+            var discoverCooldown by remember { mutableStateOf(0) }
+            var pingCooldown by remember { mutableStateOf(0) }
+
+            LaunchedEffect(Unit) {
+                while (true) {
+                    discoverCooldown = viewModel.getDiscoverCooldown()
+                    pingCooldown = viewModel.getPingCooldown()
+                    kotlinx.coroutines.delay(1000)
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .padding(12.dp)
+                    .align(Alignment.BottomEnd),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Discover button
+                Card(
+                    modifier = Modifier.clickable(enabled = discoverCooldown == 0) {
+                        viewModel.sendDiscover()
+                    },
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (discoverCooldown == 0)
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
+                        else
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+                    )
+                ) {
+                    Text(
+                        text = if (discoverCooldown > 0) "DISC ${discoverCooldown}s" else "DISC",
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = if (discoverCooldown == 0) MaterialTheme.colorScheme.onPrimary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Ping button
+                val canPing = coverageChannelReady && currentH3 != null && pingCooldown == 0
+                Card(
+                    modifier = Modifier.clickable(enabled = canPing) {
+                        viewModel.sendPing()
+                    },
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (canPing)
+                            MaterialTheme.colorScheme.tertiary.copy(alpha = 0.9f)
+                        else
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+                    )
+                ) {
+                    Text(
+                        text = when {
+                            pingCooldown > 0 -> "PING ${pingCooldown}s"
+                            !coverageChannelReady -> "NO CH"
+                            currentH3 == null -> "NO GPS"
+                            else -> "PING"
+                        },
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = if (canPing) MaterialTheme.colorScheme.onTertiary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 

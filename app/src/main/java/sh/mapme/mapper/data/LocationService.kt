@@ -26,6 +26,9 @@ class LocationService(private val context: Context) {
 
     // H3 via native JNI library
 
+    // Persist last known position
+    private val prefs = context.getSharedPreferences("location", Context.MODE_PRIVATE)
+
     // Fused Location Provider
     private val fusedLocationClient: FusedLocationProviderClient =
         LocationServices.getFusedLocationProviderClient(context)
@@ -120,8 +123,16 @@ class LocationService(private val context: Context) {
         Log.d(TAG, "Stopped tracking")
     }
 
+    // Last known position (survives app restart)
+    val lastLat: Double get() = prefs.getFloat("last_lat", 53.5511f).toDouble()
+    val lastLon: Double get() = prefs.getFloat("last_lon", 9.9937f).toDouble()
+
     private fun updateLocation(location: Location) {
         _currentLocation.value = location
+
+        // Persist for next app start
+        prefs.edit().putFloat("last_lat", location.latitude.toFloat())
+            .putFloat("last_lon", location.longitude.toFloat()).apply()
 
         try {
             // Calculate H3 index using native library

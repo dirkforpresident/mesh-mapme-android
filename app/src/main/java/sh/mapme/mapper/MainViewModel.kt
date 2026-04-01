@@ -51,6 +51,7 @@ class MainViewModel : ViewModel() {
     val liveMappers = hexService.liveMappers
     val leaderboard = hexService.leaderboard
     val ownRank = hexService.ownRank
+    val coverageDays = hexService.coverageDays
     val isLoadingHexes = hexService.isLoading
 
     // Persistent UI state (survives tab switches)
@@ -118,4 +119,5 @@ class MainViewModel : ViewModel() {
     fun refreshLiveMappers() = hexService.fetchLiveMappers()
     fun refreshLeaderboard() = hexService.fetchLeaderboard()
     fun clearPendingSamples() = sampleRepository.clearAll()
+    fun setCoverageDays(days: Int) = hexService.setCoverageDays(days)
 }

@@ -52,6 +52,17 @@ class HexService {
 
     // MARK: - Fetch Hexes
 
+    // Coverage filter: 0 = all, 7 = 7 days, 30 = 30 days
+    private val _coverageDays = MutableStateFlow(0)
+    val coverageDays: StateFlow<Int> = _coverageDays.asStateFlow()
+
+    fun setCoverageDays(days: Int) {
+        _coverageDays.value = days
+        // Force refresh by clearing cache
+        lastFetchTime = 0
+        lastFetchLocation = null
+    }
+
     fun fetchHexes(lat: Double, lon: Double, radiusKm: Double = 5.0) {
         // Don't fetch too often
         val now = System.currentTimeMillis()
@@ -78,7 +89,9 @@ class HexService {
                 val minLon = lon - lonDelta
                 val maxLon = lon + lonDelta
 
-                val url = "${Constants.API_BASE_URL}/api/hexes?minLat=$minLat&maxLat=$maxLat&minLon=$minLon&maxLon=$maxLon"
+                val days = _coverageDays.value
+                val daysParam = if (days > 0) "&days=$days" else ""
+                val url = "${Constants.API_BASE_URL}/api/hexes?minLat=$minLat&maxLat=$maxLat&minLon=$minLon&maxLon=$maxLon$daysParam"
                 val request = Request.Builder()
                     .url(url)
                     .get()
