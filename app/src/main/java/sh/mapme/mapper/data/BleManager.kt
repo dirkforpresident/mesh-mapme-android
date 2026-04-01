@@ -2126,93 +2126,113 @@ class BleManager(private val context: Context) {
         // [1-32]    publicKey (32 bytes)
         // [33]      type (1=Person, 2=Repeater, 3=Room)
         // [34]      flags
-        // [35]      outPathLen (int8)
-        // [36-99]   outPath (64 bytes)
-        // [100-131] advName (32 bytes, null-terminated)
-        // [132-135] lastAdvert (uint32 LE)
-        // [136-139] advLat (int32 LE, divide by 1e6)
-        // [140-143] advLon (int32 LE, divide by 1e6)
-        // [144-147] lastMod (uint32 LE)
-        // Total: 148 bytes per record
+        // [35]      outPathLen (int8) — number of hops, path = outPathLen * 4 bytes
+        // [36+]     outPath (outPathLen * 4 bytes, variable!)
+        // [+0..+31] advName (32 bytes, null-terminated)
+        // [+32..+35] lastAdvert (uint32 LE)
+        // [+36..+39] advLat (int32 LE, divide by 1e6)
+        // [+40..+43] advLon (int32 LE, divide by 1e6)
+        // [+44..+47] lastMod (uint32 LE)
         //
         // Buffer may contain multiple records concatenated (bulk GET_CONTACTS)
 
-        val RECORD_SIZE = 148
-        if (data.size < 96) {
+        if (data.size < 36) {
             Log.d(TAG, "Contact response too short: ${data.size} bytes")
             return
         }
 
-        // Determine record size from data: if buffer has multiple records, calculate
-        val recordSize = if (data.size >= RECORD_SIZE) RECORD_SIZE else data.size
-        val numRecords = data.size / recordSize
-        Log.d(TAG, "Contact buffer: ${data.size} bytes, parsing $numRecords records of $recordSize bytes")
+        Log.d(TAG, "Contact buffer: ${data.size} bytes")
 
         var offset = 0
         var parsed = 0
-        while (offset + 96 <= data.size) {
+        while (offset + 36 <= data.size) {
             try {
+                // Check for record start marker
+                val code = data[offset].toInt() and 0xFF
+                if (code != 0x03) {
+                    // Might be EndOfContacts (0x04) or garbage
+                    if (code == 0x04) {
+                        Log.d(TAG, "EndOfContacts marker at offset $offset")
+                        break
+                    }
+                    Log.d(TAG, "Unexpected code 0x${"%02x".format(code)} at offset $offset, stopping")
+                    break
+                }
+
                 val pubkeyBytes = data.sliceArray(offset + 1 until offset + 33)
                 val pubkeyHex = pubkeyBytes.joinToString("") { "%02x".format(it) }
                 val shortId = pubkeyHex.take(8)
 
                 val nodeType = data[offset + 33].toInt() and 0xFF
+                val flags = data[offset + 34].toInt() and 0xFF
+                val outPathLen = data[offset + 35].toInt() and 0xFF
+                val pathBytes = outPathLen * 4  // Each hop is 4 bytes
+
+                // Calculate dynamic offsets after variable-length path
+                val nameStart = offset + 36 + pathBytes
+                if (nameStart + 48 > data.size) {
+                    Log.d(TAG, "Record at offset $offset truncated (need ${nameStart + 48}, have ${data.size})")
+                    break
+                }
+
+                val name = data.sliceArray(nameStart until nameStart + 32)
+                    .takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
+
+                val latOffset = nameStart + 36
+                val lonOffset = nameStart + 40
+                val lastModOffset = nameStart + 44
+                val nextRecordOffset = nameStart + 48
+
+                val latRaw = ByteBuffer.wrap(data, latOffset, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                val lonRaw = ByteBuffer.wrap(data, lonOffset, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                val lat = latRaw / 1e6
+                val lon = lonRaw / 1e6
+
                 val typeNames = mapOf(1 to "Person", 2 to "Repeater", 3 to "Room")
                 val typeName = typeNames[nodeType] ?: "Type$nodeType"
-
-                // Name offset depends on path size
-                val nameOffset = if (offset + RECORD_SIZE <= data.size) {
-                    offset + 100  // Full record: 64-byte path
-                } else {
-                    offset + 52   // Short record: 16-byte path (connect.html format)
-                }
-                val nameEndOffset = nameOffset + 32
-
-                val name = if (nameEndOffset <= data.size) {
-                    data.sliceArray(nameOffset until nameEndOffset)
-                        .takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
-                } else ""
-
-                // GPS offset depends on path size
-                val latOffset = if (offset + RECORD_SIZE <= data.size) offset + 136 else offset + 88
-                val lonOffset = latOffset + 4
-
-                var lat = 0.0
-                var lon = 0.0
-                if (lonOffset + 4 <= data.size) {
-                    val latRaw = ByteBuffer.wrap(data, latOffset, 4).order(ByteOrder.LITTLE_ENDIAN).int
-                    val lonRaw = ByteBuffer.wrap(data, lonOffset, 4).order(ByteOrder.LITTLE_ENDIAN).int
-                    lat = latRaw / 1e6
-                    lon = lonRaw / 1e6
-                }
-
                 val displayName = if (name.isNotEmpty()) name else shortId
                 val hasGps = lat != 0.0 || lon != 0.0
 
-                Log.d(TAG, "CONTACT[$parsed]: $typeName '$displayName' lat=$lat lon=$lon")
+                // Sanity check: valid type and reasonable GPS
+                if (nodeType in 1..3 && (lat in -90.0..90.0) && (lon in -180.0..180.0)) {
+                    Log.d(TAG, "CONTACT[$parsed]: $typeName '$displayName' lat=$lat lon=$lon pathLen=$outPathLen")
 
-                hexService?.uploadNode(
-                    pubkey = pubkeyHex,
-                    type = nodeType,
-                    name = displayName,
-                    lat = if (hasGps) lat else null,
-                    lon = if (hasGps) lon else null,
-                    sessionToken = _sessionToken
-                )
+                    hexService?.uploadNode(
+                        pubkey = pubkeyHex,
+                        type = nodeType,
+                        name = displayName,
+                        lat = if (hasGps) lat else null,
+                        lon = if (hasGps) lon else null,
+                        sessionToken = _sessionToken
+                    )
+                } else if (nodeType in 1..3) {
+                    // Valid type but no/bad GPS — upload without GPS
+                    Log.d(TAG, "CONTACT[$parsed]: $typeName '$displayName' (no valid GPS)")
+                    hexService?.uploadNode(
+                        pubkey = pubkeyHex,
+                        type = nodeType,
+                        name = displayName,
+                        lat = null,
+                        lon = null,
+                        sessionToken = _sessionToken
+                    )
+                } else {
+                    Log.d(TAG, "CONTACT[$parsed]: Skipping invalid type $nodeType at offset $offset")
+                }
 
                 parsed++
                 if (_contactSyncRunning.value) {
                     _contactSyncCount.value = parsed
                 }
 
-                // Move to next record
-                offset += if (offset + RECORD_SIZE <= data.size) RECORD_SIZE else data.size - offset
+                offset = nextRecordOffset
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to parse contact at offset $offset", e)
                 break
             }
         }
 
+        Log.d(TAG, "Parsed $parsed contacts from ${data.size} bytes")
         if (parsed > 1) {
             log("SYNC", "Parsed $parsed contacts", "green")
         }
