@@ -614,26 +614,6 @@ fun ConnectedScreen(viewModel: MainViewModel) {
         }
 
 
-        // Sync Contacts Button
-        if (sessionVerified) {
-            item {
-                val contactSyncRunning by viewModel.contactSyncRunning.collectAsState()
-                val contactSyncCount by viewModel.contactSyncCount.collectAsState()
-
-                OutlinedButton(
-                    onClick = { viewModel.syncContacts() },
-                    enabled = !contactSyncRunning,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    if (contactSyncRunning) {
-                        Text("Syncing contacts... ($contactSyncCount)")
-                    } else {
-                        Text("Sync Contacts to Server")
-                    }
-                }
-            }
-        }
-
         // Activity Log
         if (debugLog.isNotEmpty()) {
             item {
