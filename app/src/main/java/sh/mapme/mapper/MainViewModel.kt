@@ -103,6 +103,9 @@ class MainViewModel : ViewModel() {
     fun getDiscoverCooldown() = bleManager.manualDiscoverCooldownRemaining
     fun getPingCooldown() = bleManager.manualPingCooldownRemaining
     fun startVerification() = bleManager.startVerification()
+    fun syncContacts() = bleManager.syncContacts()
+    val contactSyncCount = bleManager.contactSyncCount
+    val contactSyncRunning = bleManager.contactSyncRunning
 
     // MARK: - Location Actions
 

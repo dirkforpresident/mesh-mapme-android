@@ -68,7 +68,9 @@ enum class CommandCode(val value: Byte) {
 enum class ResponseCode(val value: Byte) {
     OK(0x00),
     ERR(0x01),
-    CONTACT(0x03),                // Response to GET_CONTACT_BY_KEY
+    CONTACTS_START(0x02),         // Start of contacts list (contains count)
+    CONTACT(0x03),                // Single contact record
+    CONTACTS_END(0x04),           // End of contacts list
     SELF_INFO(0x05),
     CONTACTS(0x06),
     CHANNEL_MSG_RECV(0x08),       // Channel message (basic)

@@ -1263,7 +1263,9 @@ class BleManager(private val context: Context) {
             val minSize = when (responseCode) {
                 ResponseCode.OK -> 1
                 ResponseCode.ERR -> 1  // Should not reach here (handled above)
+                ResponseCode.CONTACTS_START -> 5  // [code][count:4]
                 ResponseCode.CONTACT -> 96  // [code][pubkey:32][type][flags][pathLen][path:16][name:32][lastAdv:4][lat:4][lon:4][lastmod:4]
+                ResponseCode.CONTACTS_END -> 5  // [code][lastmod:4]
                 ResponseCode.SELF_INFO -> 58  // Should not reach here (handled above)
                 ResponseCode.DEVICE_INFO -> 20  // Has variable model field
                 ResponseCode.CHANNEL_INFO -> 50
@@ -1375,7 +1377,25 @@ class BleManager(private val context: Context) {
                 }
             }
             ResponseCode.ERR -> log("RX", "Error", "red")
-            ResponseCode.CONTACT -> parseContactResponse(data)
+            ResponseCode.CONTACTS_START -> {
+                if (data.size >= 5) {
+                    val count = ByteBuffer.wrap(data, 1, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                    log("SYNC", "Receiving $count contacts...", "blue")
+                    Log.d(TAG, "Contacts start: $count contacts")
+                }
+            }
+            ResponseCode.CONTACT -> {
+                parseContactResponse(data)
+                if (_contactSyncRunning.value) {
+                    _contactSyncCount.value++
+                }
+            }
+            ResponseCode.CONTACTS_END -> {
+                val count = _contactSyncCount.value
+                log("SYNC", "Sync complete: $count contacts uploaded", "green")
+                Log.d(TAG, "Contacts end: $count synced")
+                _contactSyncRunning.value = false
+            }
             ResponseCode.SELF_INFO -> parseSelfInfo(data)
             ResponseCode.DEVICE_INFO -> parseDeviceInfo(data)
             ResponseCode.CHANNEL_INFO -> parseChannelInfo(data)
@@ -2028,7 +2048,24 @@ class BleManager(private val context: Context) {
         }
     }
 
-    // MARK: - Contact Request
+    // MARK: - Contact Sync
+
+    private var _contactSyncCount = MutableStateFlow(0)
+    val contactSyncCount: StateFlow<Int> = _contactSyncCount.asStateFlow()
+    private var _contactSyncRunning = MutableStateFlow(false)
+    val contactSyncRunning: StateFlow<Boolean> = _contactSyncRunning.asStateFlow()
+
+    fun syncContacts() {
+        if (!_isConnected.value) return
+        if (_contactSyncRunning.value) return
+
+        _contactSyncRunning.value = true
+        _contactSyncCount.value = 0
+        log("SYNC", "Requesting contacts...", "blue")
+
+        // Send GET_CONTACTS command
+        sendCommand(CommandCode.GET_CONTACTS)
+    }
 
     private fun requestContactByKey(pubkeyBytes: ByteArray) {
         if (!_isConnected.value || pubkeyBytes.size != 32) return
