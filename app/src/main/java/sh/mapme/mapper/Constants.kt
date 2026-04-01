@@ -46,7 +46,7 @@ enum class CommandCode(val value: Byte) {
     APP_START(0x01),
     SEND_CHANNEL_TXT_MSG(0x03),
     REPEATERS_REQUEST(0x05),      // Discover nearby repeaters (legacy)
-    GET_CONTACTS(0x07),
+    GET_CONTACTS(0x04),           // 4 - request all contacts from companion
     GET_DEVICE_TIME(0x08),
     SYNC_NEXT_MESSAGE(0x0A),      // Fetch next waiting message
     GET_BATTERY_AND_STORAGE(0x14), // Get battery and storage info
