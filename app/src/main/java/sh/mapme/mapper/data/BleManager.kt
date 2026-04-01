@@ -2142,6 +2142,9 @@ class BleManager(private val context: Context) {
         }
 
         Log.d(TAG, "Contact buffer: ${data.size} bytes")
+        // Dump first 500 bytes for debugging record boundaries
+        Log.d(TAG, "DUMP[0-250]: ${data.sliceArray(0 until minOf(250, data.size)).joinToString("") { "%02x".format(it) }}")
+        Log.d(TAG, "DUMP[250-500]: ${data.sliceArray(minOf(250, data.size) until minOf(500, data.size)).joinToString("") { "%02x".format(it) }}")
 
         var offset = 0
         var parsed = 0
