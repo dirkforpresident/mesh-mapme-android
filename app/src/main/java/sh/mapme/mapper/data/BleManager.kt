@@ -1384,12 +1384,7 @@ class BleManager(private val context: Context) {
                     Log.d(TAG, "Contacts start: $count contacts")
                 }
             }
-            ResponseCode.CONTACT -> {
-                parseContactResponse(data)
-                if (_contactSyncRunning.value) {
-                    _contactSyncCount.value++
-                }
-            }
+            ResponseCode.CONTACT -> parseContactResponse(data)
             ResponseCode.CONTACTS_END -> {
                 val count = _contactSyncCount.value
                 log("SYNC", "Sync complete: $count contacts uploaded", "green")
@@ -2072,7 +2067,11 @@ class BleManager(private val context: Context) {
             delay(15_000)
             if (_contactSyncRunning.value) {
                 val count = _contactSyncCount.value
-                log("SYNC", "Done: $count contacts synced", "green")
+                if (count > 0) {
+                    log("SYNC", "$count contacts synced!", "green")
+                } else {
+                    log("SYNC", "No contacts found (no repeaters in range?)", "orange")
+                }
                 _contactSyncRunning.value = false
             }
         }
@@ -2149,6 +2148,11 @@ class BleManager(private val context: Context) {
                 lon = if (hasGps) lon else null,
                 sessionToken = _sessionToken
             )
+
+            // Update sync counter
+            if (_contactSyncRunning.value) {
+                _contactSyncCount.value++
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse contact response", e)
         }
