@@ -1263,6 +1263,7 @@ class BleManager(private val context: Context) {
             val minSize = when (responseCode) {
                 ResponseCode.OK -> 1
                 ResponseCode.ERR -> 1  // Should not reach here (handled above)
+                ResponseCode.CONTACT -> 96  // [code][pubkey:32][type][flags][pathLen][path:16][name:32][lastAdv:4][lat:4][lon:4][lastmod:4]
                 ResponseCode.SELF_INFO -> 58  // Should not reach here (handled above)
                 ResponseCode.DEVICE_INFO -> 20  // Has variable model field
                 ResponseCode.CHANNEL_INFO -> 50
@@ -1374,6 +1375,7 @@ class BleManager(private val context: Context) {
                 }
             }
             ResponseCode.ERR -> log("RX", "Error", "red")
+            ResponseCode.CONTACT -> parseContactResponse(data)
             ResponseCode.SELF_INFO -> parseSelfInfo(data)
             ResponseCode.DEVICE_INFO -> parseDeviceInfo(data)
             ResponseCode.CHANNEL_INFO -> parseChannelInfo(data)
@@ -1880,19 +1882,13 @@ class BleManager(private val context: Context) {
                 log("RX", "$typeName: $displayName ($rssi dBm)", "blue")
             }
 
-            // Upload node to server
-            val uploadLat = if (hasLatLon && lat != 0.0) lat else context?.let {
-                MapmeApp.instance.locationService.currentLocation.value?.latitude
-            }
-            val uploadLon = if (hasLatLon && lon != 0.0) lon else context?.let {
-                MapmeApp.instance.locationService.currentLocation.value?.longitude
-            }
+            // Upload node to server — only use GPS if the advert actually contains it
             hexService?.uploadNode(
                 pubkey = pubkeyHex,
                 type = nodeType,
                 name = displayName,
-                lat = uploadLat,
-                lon = uploadLon,
+                lat = if (hasLatLon && lat != 0.0) lat else null,
+                lon = if (hasLatLon && lon != 0.0) lon else null,
                 sessionToken = _sessionToken
             )
         } catch (e: Exception) {
@@ -2014,16 +2010,8 @@ class BleManager(private val context: Context) {
         log("RX", "DISC: $shortId (${rssi}dBm, ${snr}dB)", "green")
         feedbackManager?.playDiscoverReply()
 
-        // Upload repeater contact to server
-        val loc = MapmeApp.instance.locationService.currentLocation.value
-        hexService?.uploadNode(
-            pubkey = pubkeyHex,
-            type = 2,  // Repeater
-            name = shortId,
-            lat = loc?.latitude,
-            lon = loc?.longitude,
-            sessionToken = _sessionToken
-        )
+        // Request full contact details (name, GPS) from companion
+        requestContactByKey(pubkeyBytes)
 
         // Add sample for upload
         currentH3?.let { h3 ->
@@ -2039,6 +2027,86 @@ class BleManager(private val context: Context) {
             sampleRepository?.addSample(sample)
         }
     }
+
+    // MARK: - Contact Request
+
+    private fun requestContactByKey(pubkeyBytes: ByteArray) {
+        if (!_isConnected.value || pubkeyBytes.size != 32) return
+
+        val frame = ByteArray(33)
+        frame[0] = CommandCode.GET_CONTACT_BY_KEY.value
+        System.arraycopy(pubkeyBytes, 0, frame, 1, 32)
+
+        val shortId = pubkeyBytes.joinToString("") { "%02x".format(it) }.take(8)
+        Log.d(TAG, "Requesting contact details for $shortId...")
+
+        sendRawData(frame)
+    }
+
+    private fun parseContactResponse(data: ByteArray) {
+        // Format (from connect.html):
+        // [0] code (3)
+        // [1-32] pubkey (32 bytes)
+        // [33] type (1=Person, 2=Repeater, 3=Room)
+        // [34] flags
+        // [35] out_path_len
+        // [36-51] out_path (16 bytes)
+        // [52-83] name (32 bytes, null-terminated)
+        // [84-87] last_advert_timestamp (uint32 LE)
+        // [88-91] gps_lat (int32 LE, divide by 1e6)
+        // [92-95] gps_lon (int32 LE, divide by 1e6)
+        // [96-99] lastmod (uint32 LE)
+
+        if (data.size < 96) {
+            Log.d(TAG, "Contact response too short: ${data.size} bytes")
+            return
+        }
+
+        try {
+            val pubkeyBytes = data.sliceArray(1 until 33)
+            val pubkeyHex = pubkeyBytes.joinToString("") { "%02x".format(it) }
+            val shortId = pubkeyHex.take(8)
+
+            val nodeType = data[33].toInt() and 0xFF
+
+            // Name (null-terminated string, bytes 52-83)
+            val nameBytes = data.sliceArray(52 until 84)
+            val name = nameBytes.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
+
+            // GPS (int32 little-endian, divide by 1e6)
+            val latRaw = ByteBuffer.wrap(data, 88, 4).order(ByteOrder.LITTLE_ENDIAN).int
+            val lonRaw = ByteBuffer.wrap(data, 92, 4).order(ByteOrder.LITTLE_ENDIAN).int
+            val lat = latRaw / 1e6
+            val lon = lonRaw / 1e6
+
+            val typeNames = mapOf(1 to "Person", 2 to "Repeater", 3 to "Room")
+            val typeName = typeNames[nodeType] ?: "Type$nodeType"
+            val displayName = if (name.isNotEmpty()) name else shortId
+
+            Log.d(TAG, "CONTACT: $typeName '$displayName' lat=$lat lon=$lon")
+
+            // Upload to server with real GPS (only if GPS is set)
+            val hasGps = lat != 0.0 || lon != 0.0
+            if (hasGps) {
+                log("RX", "$typeName: $displayName (${lat.format(4)}, ${lon.format(4)})", "green")
+            } else {
+                log("RX", "$typeName: $displayName (no GPS)", "blue")
+            }
+
+            hexService?.uploadNode(
+                pubkey = pubkeyHex,
+                type = nodeType,
+                name = displayName,
+                lat = if (hasGps) lat else null,
+                lon = if (hasGps) lon else null,
+                sessionToken = _sessionToken
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse contact response", e)
+        }
+    }
+
+    private fun Double.format(digits: Int) = "%.${digits}f".format(this)
 
     // MARK: - Samples
 
@@ -2077,13 +2145,13 @@ class BleManager(private val context: Context) {
 
     private fun uploadAdvert(type: Int, nodeId: ByteArray, fullData: ByteArray) {
         val nodeIdHex = nodeId.joinToString("") { "%02x".format(it) }
-        val loc = MapmeApp.instance.locationService.currentLocation.value
+        // Short adverts have no GPS — only full adverts (parseAdvertFromPayload) may have lat/lon
         hexService?.uploadNode(
             pubkey = nodeIdHex,
             type = type,
             name = nodeIdHex.take(8),
-            lat = loc?.latitude,
-            lon = loc?.longitude,
+            lat = null,
+            lon = null,
             sessionToken = _sessionToken
         )
     }

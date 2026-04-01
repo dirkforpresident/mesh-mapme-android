@@ -53,6 +53,7 @@ enum class CommandCode(val value: Byte) {
     DEVICE_QUERY(0x16),           // Get device info (model, version)
     GET_CHANNELS(0x1F),
     SET_CHANNEL(0x20),
+    GET_CONTACT_BY_KEY(0x1E),     // 30 - request contact details by pubkey
     SIGN_START(0x21),
     SIGN_DATA(0x22),
     SIGN_FINISH(0x23),
@@ -67,6 +68,7 @@ enum class CommandCode(val value: Byte) {
 enum class ResponseCode(val value: Byte) {
     OK(0x00),
     ERR(0x01),
+    CONTACT(0x03),                // Response to GET_CONTACT_BY_KEY
     SELF_INFO(0x05),
     CONTACTS(0x06),
     CHANNEL_MSG_RECV(0x08),       // Channel message (basic)
