@@ -1199,9 +1199,10 @@ class BleManager(private val context: Context) {
 
         // IMPORTANT: Check for SelfInfo without prefix BEFORE ResponseCodes!
         // SelfInfo Type 1=Person, 2=Repeater, 3=Room - but 0x01 is also ResponseCode.ERR
+        // And 0x02/0x03/0x04 are also ContactsStart/Contact/ContactsEnd during sync
         // Differentiate by buffer size: SelfInfo is always 57+ bytes, ERR is 1-2 bytes
-        // Variable-length nodeName field requires waiting for end of message
-        if (code in listOf(0x01, 0x02, 0x03)) {
+        // During contact sync, 0x02 (96+ bytes) is Contact, not SelfInfo
+        if (code in listOf(0x01, 0x02, 0x03) && !_contactSyncRunning.value) {
             if (rxBuffer.size >= 57 && (lastFragmentSize < 20 || bufferTimedOut)) {
                 // Complete message (end fragment received or timeout) - parse now
                 Log.d(TAG, "Parsing as SelfInfo (type=$code, size=${rxBuffer.size}, complete)")
@@ -1230,6 +1231,32 @@ class BleManager(private val context: Context) {
                 // Waiting for more SelfInfo data
                 Log.d(TAG, "Waiting for more SelfInfo data (have ${rxBuffer.size}, need 57)")
                 startBufferTimeout()
+                return
+            }
+        }
+
+        // Contact sync responses — handle before generic ResponseCode parsing
+        if (_contactSyncRunning.value) {
+            // ContactsStart (0x02): [code][count:4] = 5 bytes
+            if (code == 0x02 && rxBuffer.size >= 5 && rxBuffer.size < 20) {
+                handleResponse(ResponseCode.CONTACTS_START, rxBuffer)
+                rxBuffer = byteArrayOf()
+                return
+            }
+            // Contact (0x03): 96+ bytes with pubkey, name, GPS
+            if (code == 0x03 && rxBuffer.size >= 96 && (lastFragmentSize < 20 || bufferTimedOut)) {
+                handleResponse(ResponseCode.CONTACT, rxBuffer)
+                rxBuffer = byteArrayOf()
+                return
+            }
+            if (code == 0x03 && rxBuffer.size < 96) {
+                startBufferTimeout()
+                return
+            }
+            // ContactsEnd (0x04): [code][lastmod:4] = 5 bytes
+            if (code == 0x04 && rxBuffer.size >= 5 && rxBuffer.size < 20) {
+                handleResponse(ResponseCode.CONTACTS_END, rxBuffer)
+                rxBuffer = byteArrayOf()
                 return
             }
         }
@@ -2056,21 +2083,20 @@ class BleManager(private val context: Context) {
 
         _contactSyncRunning.value = true
         _contactSyncCount.value = 0
-        log("SYNC", "Discovering repeaters...", "blue")
+        log("SYNC", "Requesting all contacts...", "blue")
 
-        // Trigger a discover — replies will automatically call requestContactByKey()
-        // which fetches full contact details (name, GPS) and uploads to server
-        sendDiscover()
+        // Send GET_CONTACTS to fetch all stored nodes from companion
+        sendCommand(CommandCode.GET_CONTACTS)
 
-        // Auto-stop sync after 15 seconds (discover replies trickle in)
+        // Timeout after 60 seconds (large contact lists take time over BLE)
         scope.launch {
-            delay(15_000)
+            delay(60_000)
             if (_contactSyncRunning.value) {
                 val count = _contactSyncCount.value
                 if (count > 0) {
                     log("SYNC", "$count contacts synced!", "green")
                 } else {
-                    log("SYNC", "No contacts found (no repeaters in range?)", "orange")
+                    log("SYNC", "No response from device", "orange")
                 }
                 _contactSyncRunning.value = false
             }
