@@ -2087,20 +2087,21 @@ class BleManager(private val context: Context) {
 
         _contactSyncRunning.value = true
         _contactSyncCount.value = 0
-        log("SYNC", "Requesting all contacts...", "blue")
+        log("SYNC", "Discovering repeaters...", "blue")
 
-        // Send GET_CONTACTS to fetch all stored nodes from companion
-        sendCommand(CommandCode.GET_CONTACTS)
+        // Trigger discover — replies automatically call requestContactByKey()
+        // which fetches full contact details (name, GPS) and uploads to server
+        sendDiscover()
 
-        // Timeout after 60 seconds (large contact lists take time over BLE)
+        // Auto-stop after 15 seconds
         scope.launch {
-            delay(60_000)
+            delay(15_000)
             if (_contactSyncRunning.value) {
                 val count = _contactSyncCount.value
                 if (count > 0) {
                     log("SYNC", "$count contacts synced!", "green")
                 } else {
-                    log("SYNC", "No response from device", "orange")
+                    log("SYNC", "No repeaters in range", "orange")
                 }
                 _contactSyncRunning.value = false
             }
