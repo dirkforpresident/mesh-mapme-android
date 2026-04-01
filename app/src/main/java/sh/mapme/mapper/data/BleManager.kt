@@ -2061,10 +2061,21 @@ class BleManager(private val context: Context) {
 
         _contactSyncRunning.value = true
         _contactSyncCount.value = 0
-        log("SYNC", "Requesting contacts...", "blue")
+        log("SYNC", "Discovering repeaters...", "blue")
 
-        // Send GET_CONTACTS command
-        sendCommand(CommandCode.GET_CONTACTS)
+        // Trigger a discover — replies will automatically call requestContactByKey()
+        // which fetches full contact details (name, GPS) and uploads to server
+        sendDiscover()
+
+        // Auto-stop sync after 15 seconds (discover replies trickle in)
+        scope.launch {
+            delay(15_000)
+            if (_contactSyncRunning.value) {
+                val count = _contactSyncCount.value
+                log("SYNC", "Done: $count contacts synced", "green")
+                _contactSyncRunning.value = false
+            }
+        }
     }
 
     private fun requestContactByKey(pubkeyBytes: ByteArray) {
