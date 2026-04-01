@@ -60,6 +60,7 @@ class MainViewModel : ViewModel() {
     val mapFollowLocation = MutableStateFlow(true)
     val mapUseDarkMode = MutableStateFlow(true)
     val mapHasInitialLocation = mutableStateOf(false)
+    val keepScreenOn = MutableStateFlow(true)
 
     init {
         // Fetch initial data

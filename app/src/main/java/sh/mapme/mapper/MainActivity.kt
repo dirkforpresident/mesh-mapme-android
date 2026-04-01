@@ -1,6 +1,7 @@
 package sh.mapme.mapper
 
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -31,6 +32,19 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
+            // Keep screen on while BLE connected and keepScreenOn enabled
+            val viewModel: MainViewModel = viewModel()
+            val isConnected by viewModel.isConnected.collectAsState()
+            val keepScreenOn by viewModel.keepScreenOn.collectAsState()
+
+            LaunchedEffect(isConnected, keepScreenOn) {
+                if (isConnected && keepScreenOn) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            }
+
             MapmeMapperTheme {
                 MainApp()
             }

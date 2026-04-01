@@ -733,10 +733,10 @@ fun ConnectedScreen(viewModel: MainViewModel) {
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Sound & Vibration
+                        // Sound, Vibration & Screen
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(24.dp)
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("Sound", style = MaterialTheme.typography.bodySmall)
@@ -762,6 +762,16 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                                     modifier = Modifier.scale(0.8f)
                                 )
                             }
+                        }
+                        val keepScreenOn by viewModel.keepScreenOn.collectAsState()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Screen on", style = MaterialTheme.typography.bodySmall)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Switch(
+                                checked = keepScreenOn,
+                                onCheckedChange = { viewModel.keepScreenOn.value = it },
+                                modifier = Modifier.scale(0.8f)
+                            )
                         }
                     }
                 }
