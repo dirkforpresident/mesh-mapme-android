@@ -1236,6 +1236,10 @@ class BleManager(private val context: Context) {
         }
 
         // Contact sync responses — handle before generic ResponseCode parsing
+        if (_contactSyncRunning.value && code in listOf(0x02, 0x03, 0x04, 0x06)) {
+            Log.d(TAG, "SYNC: code=0x${"%02x".format(code)} size=${rxBuffer.size} lastFrag=$lastFragmentSize timedOut=$bufferTimedOut")
+            log("SYNC", "Raw: 0x${"%02x".format(code)} (${rxBuffer.size}B)", "blue")
+        }
         if (_contactSyncRunning.value) {
             // ContactsStart (0x02): [code][count:4] = 5 bytes
             if (code == 0x02 && rxBuffer.size >= 5 && rxBuffer.size < 20) {
