@@ -24,7 +24,6 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
-import android.view.MotionEvent
 import sh.mapme.mapper.MainViewModel
 import sh.mapme.mapper.MapmeApp
 import sh.mapme.mapper.data.HexColor
@@ -118,39 +117,46 @@ fun MapScreen(
             controller.setZoom(viewModel.mapZoomLevel.value)
             controller.setCenter(defaultLocation)
 
-            // Add location overlay with high-contrast icon
+            // Add location overlay with bright red arrow (visible in both dark and light mode)
             try {
                 val locationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(context), this)
                 locationOverlay.enableMyLocation()
 
-                // Create a high-contrast location dot (works in both dark and light mode)
-                val dotSize = 40
-                val dotBitmap = android.graphics.Bitmap.createBitmap(dotSize, dotSize, android.graphics.Bitmap.Config.ARGB_8888)
-                val dotCanvas = android.graphics.Canvas(dotBitmap)
-                // Outer ring (dark border for light mode visibility)
-                val outerPaint = android.graphics.Paint().apply {
+                // Create a red arrow/triangle pointing up
+                val size = 48
+                val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(bitmap)
+                // Black outline
+                val outlinePaint = android.graphics.Paint().apply {
                     color = AndroidColor.BLACK
                     isAntiAlias = true
                     style = android.graphics.Paint.Style.FILL
                 }
-                dotCanvas.drawCircle(dotSize / 2f, dotSize / 2f, dotSize / 2f, outerPaint)
-                // Inner blue dot
-                val innerPaint = android.graphics.Paint().apply {
-                    color = AndroidColor.rgb(0x33, 0x88, 0xFF)
+                val outlinePath = android.graphics.Path().apply {
+                    moveTo(size / 2f, 0f)
+                    lineTo(size.toFloat(), size.toFloat())
+                    lineTo(size / 2f, size * 0.7f)
+                    lineTo(0f, size.toFloat())
+                    close()
+                }
+                canvas.drawPath(outlinePath, outlinePaint)
+                // Red fill (slightly smaller)
+                val fillPaint = android.graphics.Paint().apply {
+                    color = AndroidColor.rgb(0xFF, 0x22, 0x22)
                     isAntiAlias = true
                     style = android.graphics.Paint.Style.FILL
                 }
-                dotCanvas.drawCircle(dotSize / 2f, dotSize / 2f, dotSize / 2f - 4f, innerPaint)
-                // White center
-                val centerPaint = android.graphics.Paint().apply {
-                    color = AndroidColor.WHITE
-                    isAntiAlias = true
-                    style = android.graphics.Paint.Style.FILL
+                val fillPath = android.graphics.Path().apply {
+                    moveTo(size / 2f, 4f)
+                    lineTo(size - 4f, size - 4f)
+                    lineTo(size / 2f, size * 0.7f)
+                    lineTo(4f, size - 4f)
+                    close()
                 }
-                dotCanvas.drawCircle(dotSize / 2f, dotSize / 2f, 6f, centerPaint)
+                canvas.drawPath(fillPath, fillPaint)
 
-                locationOverlay.setPersonIcon(dotBitmap)
-                locationOverlay.setPersonHotspot(dotSize / 2f, dotSize / 2f)
+                locationOverlay.setPersonIcon(bitmap)
+                locationOverlay.setPersonHotspot(size / 2f, size / 2f)
                 overlays.add(locationOverlay)
             } catch (e: Exception) {
                 // Ignore if location overlay fails
@@ -298,30 +304,7 @@ fun MapScreen(
         // OpenStreetMap
         AndroidView(
             factory = {
-                var touchStartX = 0f
-                var touchStartY = 0f
-                mapView.apply {
-                    setOnTouchListener { view, event ->
-                        when (event.action and MotionEvent.ACTION_MASK) {
-                            MotionEvent.ACTION_DOWN -> {
-                                touchStartX = event.x
-                                touchStartY = event.y
-                            }
-                            MotionEvent.ACTION_UP -> {
-                                // Only disable follow on significant single-finger drag (>50px)
-                                if (event.pointerCount <= 1) {
-                                    val dx = event.x - touchStartX
-                                    val dy = event.y - touchStartY
-                                    val dist = Math.sqrt((dx * dx + dy * dy).toDouble())
-                                    if (dist > 50) {
-                                        viewModel.mapFollowLocation.value = false
-                                    }
-                                }
-                            }
-                        }
-                        false
-                    }
-                }
+                mapView
             },
             modifier = Modifier.fillMaxSize()
         )
@@ -462,9 +445,12 @@ fun MapScreen(
             Card(
                 modifier = Modifier
                     .clickable {
-                        viewModel.mapFollowLocation.value = true
-                        currentLocation?.let {
-                            mapView.controller.animateTo(GeoPoint(it.latitude, it.longitude))
+                        val newValue = !viewModel.mapFollowLocation.value
+                        viewModel.mapFollowLocation.value = newValue
+                        if (newValue) {
+                            currentLocation?.let {
+                                mapView.controller.animateTo(GeoPoint(it.latitude, it.longitude))
+                            }
                         }
                     },
                 colors = CardDefaults.cardColors(
