@@ -61,6 +61,8 @@ class MainViewModel : ViewModel() {
     val mapFollowLocation = MutableStateFlow(true)
     val mapUseDarkMode = MutableStateFlow(true)
     val mapHasInitialLocation = mutableStateOf(false)
+    val mapZoomLevel = MutableStateFlow(14.0)
+    val mapShowActivityFeed = mutableStateOf(false)
     val keepScreenOn = MutableStateFlow(true)
 
     init {

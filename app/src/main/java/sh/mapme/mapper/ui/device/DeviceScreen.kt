@@ -763,16 +763,6 @@ fun ConnectedScreen(viewModel: MainViewModel) {
                                 )
                             }
                         }
-                        val keepScreenOn by viewModel.keepScreenOn.collectAsState()
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Screen on", style = MaterialTheme.typography.bodySmall)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Switch(
-                                checked = keepScreenOn,
-                                onCheckedChange = { viewModel.keepScreenOn.value = it },
-                                modifier = Modifier.scale(0.8f)
-                            )
-                        }
                     }
                 }
             }

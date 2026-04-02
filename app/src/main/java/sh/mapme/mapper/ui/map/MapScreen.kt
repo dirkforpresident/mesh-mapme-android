@@ -51,7 +51,7 @@ fun MapScreen(
 
     var showStats by remember { mutableStateOf(true) }
     val useDarkMap by viewModel.mapUseDarkMode.collectAsState()
-    var showActivityFeed by remember { mutableStateOf(false) }
+    var showActivityFeed by viewModel.mapShowActivityFeed
     val followLocation by viewModel.mapFollowLocation.collectAsState()
 
     // Location permission
@@ -115,13 +115,42 @@ fun MapScreen(
             setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
             zoomController.setVisibility(org.osmdroid.views.CustomZoomButtonsController.Visibility.NEVER)
-            controller.setZoom(14.0)
+            controller.setZoom(viewModel.mapZoomLevel.value)
             controller.setCenter(defaultLocation)
 
-            // Add location overlay with proper provider
+            // Add location overlay with high-contrast icon
             try {
                 val locationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(context), this)
                 locationOverlay.enableMyLocation()
+
+                // Create a high-contrast location dot (works in both dark and light mode)
+                val dotSize = 40
+                val dotBitmap = android.graphics.Bitmap.createBitmap(dotSize, dotSize, android.graphics.Bitmap.Config.ARGB_8888)
+                val dotCanvas = android.graphics.Canvas(dotBitmap)
+                // Outer ring (dark border for light mode visibility)
+                val outerPaint = android.graphics.Paint().apply {
+                    color = AndroidColor.BLACK
+                    isAntiAlias = true
+                    style = android.graphics.Paint.Style.FILL
+                }
+                dotCanvas.drawCircle(dotSize / 2f, dotSize / 2f, dotSize / 2f, outerPaint)
+                // Inner blue dot
+                val innerPaint = android.graphics.Paint().apply {
+                    color = AndroidColor.rgb(0x33, 0x88, 0xFF)
+                    isAntiAlias = true
+                    style = android.graphics.Paint.Style.FILL
+                }
+                dotCanvas.drawCircle(dotSize / 2f, dotSize / 2f, dotSize / 2f - 4f, innerPaint)
+                // White center
+                val centerPaint = android.graphics.Paint().apply {
+                    color = AndroidColor.WHITE
+                    isAntiAlias = true
+                    style = android.graphics.Paint.Style.FILL
+                }
+                dotCanvas.drawCircle(dotSize / 2f, dotSize / 2f, 6f, centerPaint)
+
+                locationOverlay.setPersonIcon(dotBitmap)
+                locationOverlay.setPersonHotspot(dotSize / 2f, dotSize / 2f)
                 overlays.add(locationOverlay)
             } catch (e: Exception) {
                 // Ignore if location overlay fails
@@ -269,13 +298,24 @@ fun MapScreen(
         // OpenStreetMap
         AndroidView(
             factory = {
+                var touchStartX = 0f
+                var touchStartY = 0f
                 mapView.apply {
                     setOnTouchListener { view, event ->
                         when (event.action and MotionEvent.ACTION_MASK) {
-                            MotionEvent.ACTION_MOVE -> {
-                                // Only disable follow if single-finger pan (not pinch-to-zoom)
-                                if (event.pointerCount == 1) {
-                                    viewModel.mapFollowLocation.value = false
+                            MotionEvent.ACTION_DOWN -> {
+                                touchStartX = event.x
+                                touchStartY = event.y
+                            }
+                            MotionEvent.ACTION_UP -> {
+                                // Only disable follow on significant single-finger drag (>50px)
+                                if (event.pointerCount <= 1) {
+                                    val dx = event.x - touchStartX
+                                    val dy = event.y - touchStartY
+                                    val dist = Math.sqrt((dx * dx + dy * dy).toDouble())
+                                    if (dist > 50) {
+                                        viewModel.mapFollowLocation.value = false
+                                    }
                                 }
                             }
                         }
@@ -584,9 +624,18 @@ fun MapScreen(
         }
     }
 
+    // Save zoom level periodically
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(2000)
+            viewModel.mapZoomLevel.value = mapView.zoomLevelDouble
+        }
+    }
+
     // Cleanup
     DisposableEffect(Unit) {
         onDispose {
+            viewModel.mapZoomLevel.value = mapView.zoomLevelDouble
             mapView.onDetach()
         }
     }

@@ -1660,10 +1660,10 @@ class BleManager(private val context: Context) {
         val secretPrefix = secret.take(4).joinToString("") { "%02x".format(it) }
         Log.d(TAG, "ChannelInfo - idx: $channelIdx, name: '$name', secret: $secretPrefix...")
 
-        // Check if this is the channel we're checking during setup
+        // Accept channel info even if index doesn't match expected (faster channel syncing)
         if (channelIdx != pendingChannelCheck) {
-            Log.d(TAG, "Unexpected channel index $channelIdx, expected $pendingChannelCheck")
-            return
+            Log.d(TAG, "Channel index $channelIdx (expected $pendingChannelCheck) — accepting anyway")
+            pendingChannelCheck = channelIdx
         }
 
         // Check if slot is empty or has "coverage" name
@@ -2058,6 +2058,20 @@ class BleManager(private val context: Context) {
 
         // Request full contact details (name, GPS) from companion
         requestContactByKey(pubkeyBytes)
+
+        // Create RX packet so it shows on the map as a hex + in the RX activity feed
+        val packet = RxPacket(
+            timestamp = Date(),
+            path = listOf(shortId),
+            rssi = rssi,
+            snr = snr.toFloat(),
+            h3 = currentH3
+        )
+        val currentPackets = _recentRxPackets.value.toMutableList()
+        currentPackets.add(0, packet)
+        if (currentPackets.size > 20) currentPackets.removeLast()
+        _recentRxPackets.value = currentPackets
+        _rxCount.value++
 
         // Add sample for upload
         currentH3?.let { h3 ->
