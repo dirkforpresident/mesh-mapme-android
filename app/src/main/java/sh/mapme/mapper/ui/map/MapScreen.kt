@@ -117,43 +117,40 @@ fun MapScreen(
             controller.setZoom(viewModel.mapZoomLevel.value)
             controller.setCenter(defaultLocation)
 
-            // Add location overlay with bright red arrow (visible in both dark and light mode)
+            // Location overlay — added here but will be moved to top layer after hex drawing
             try {
                 val locationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(context), this)
                 locationOverlay.enableMyLocation()
 
-                // Create a red arrow/triangle pointing up
-                val size = 48
+                // Large red arrow with white border — visible over any hex color
+                val size = 80
                 val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
                 val canvas = android.graphics.Canvas(bitmap)
-                // Black outline
-                val outlinePaint = android.graphics.Paint().apply {
-                    color = AndroidColor.BLACK
+
+                // White border (thick)
+                val borderPaint = android.graphics.Paint().apply {
+                    color = AndroidColor.WHITE
                     isAntiAlias = true
-                    style = android.graphics.Paint.Style.FILL
+                    style = android.graphics.Paint.Style.STROKE
+                    strokeWidth = 6f
+                    strokeJoin = android.graphics.Paint.Join.ROUND
                 }
-                val outlinePath = android.graphics.Path().apply {
-                    moveTo(size / 2f, 0f)
-                    lineTo(size.toFloat(), size.toFloat())
-                    lineTo(size / 2f, size * 0.7f)
-                    lineTo(0f, size.toFloat())
-                    close()
-                }
-                canvas.drawPath(outlinePath, outlinePaint)
-                // Red fill (slightly smaller)
-                val fillPaint = android.graphics.Paint().apply {
-                    color = AndroidColor.rgb(0xFF, 0x22, 0x22)
-                    isAntiAlias = true
-                    style = android.graphics.Paint.Style.FILL
-                }
-                val fillPath = android.graphics.Path().apply {
+                val arrowPath = android.graphics.Path().apply {
                     moveTo(size / 2f, 4f)
-                    lineTo(size - 4f, size - 4f)
-                    lineTo(size / 2f, size * 0.7f)
-                    lineTo(4f, size - 4f)
+                    lineTo(size - 8f, size - 8f)
+                    lineTo(size / 2f, size * 0.65f)
+                    lineTo(8f, size - 8f)
                     close()
                 }
-                canvas.drawPath(fillPath, fillPaint)
+                canvas.drawPath(arrowPath, borderPaint)
+
+                // Red fill
+                val fillPaint = android.graphics.Paint().apply {
+                    color = AndroidColor.rgb(0xFF, 0x00, 0x00)
+                    isAntiAlias = true
+                    style = android.graphics.Paint.Style.FILL
+                }
+                canvas.drawPath(arrowPath, fillPaint)
 
                 locationOverlay.setPersonIcon(bitmap)
                 locationOverlay.setPersonHotspot(size / 2f, size / 2f)
@@ -202,6 +199,7 @@ fun MapScreen(
     LaunchedEffect(serverHexes, visitedHexes, sessionHexData.keys.toList()) {
         try {
             // Remove old polygon and marker overlays (keep location overlay)
+            val locationOverlay = mapView.overlays.firstOrNull { it is MyLocationNewOverlay }
             mapView.overlays.removeAll { it is Polygon || it is Marker }
 
             // Server hexes (from API)
@@ -294,6 +292,12 @@ fun MapScreen(
                         mapView.overlays.add(marker)
                     }
                 } catch (e: Exception) { /* skip */ }
+            }
+
+            // Move location overlay to top so it's always visible above hexagons
+            locationOverlay?.let {
+                mapView.overlays.remove(it)
+                mapView.overlays.add(it)
             }
 
             mapView.invalidate()
