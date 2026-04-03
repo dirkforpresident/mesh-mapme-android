@@ -11,7 +11,7 @@ android {
         applicationId = "sh.mapme.mapper"
         minSdk = 26
         targetSdk = 34
-        versionCode = 83
+        versionCode = 84
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
