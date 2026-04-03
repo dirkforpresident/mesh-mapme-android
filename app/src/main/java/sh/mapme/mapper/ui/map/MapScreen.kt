@@ -153,7 +153,7 @@ fun MapScreen(
                 canvas.drawPath(arrowPath, fillPaint)
 
                 locationOverlay.setPersonIcon(bitmap)
-                locationOverlay.setDirectionArrow(bitmap)
+                locationOverlay.setDirectionArrow(bitmap, bitmap)
                 locationOverlay.setPersonHotspot(size / 2f, size / 2f)
                 overlays.add(locationOverlay)
             } catch (e: Exception) {
