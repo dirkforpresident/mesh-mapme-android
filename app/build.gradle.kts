@@ -5,13 +5,13 @@ plugins {
 
 android {
     namespace = "sh.mapme.mapper"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "sh.mapme.mapper"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 85
+        targetSdk = 35
+        versionCode = 86
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
