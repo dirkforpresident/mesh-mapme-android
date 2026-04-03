@@ -1841,7 +1841,7 @@ class BleManager(private val context: Context) {
 
             val currentPackets = _recentRxPackets.value.toMutableList()
             currentPackets.add(0, packet)
-            if (currentPackets.size > 20) currentPackets.removeLast()
+            if (currentPackets.size > 20) currentPackets.removeAt(currentPackets.lastIndex)
             _recentRxPackets.value = currentPackets
 
             _rxCount.value++
@@ -2069,7 +2069,7 @@ class BleManager(private val context: Context) {
         )
         val currentPackets = _recentRxPackets.value.toMutableList()
         currentPackets.add(0, packet)
-        if (currentPackets.size > 20) currentPackets.removeLast()
+        if (currentPackets.size > 20) currentPackets.removeAt(currentPackets.lastIndex)
         _recentRxPackets.value = currentPackets
         _rxCount.value++
 
@@ -2390,7 +2390,7 @@ class BleManager(private val context: Context) {
 
         val currentLog = _debugLog.value.toMutableList()
         currentLog.add(0, entry)
-        if (currentLog.size > 50) currentLog.removeLast()
+        if (currentLog.size > 50) currentLog.removeAt(currentLog.lastIndex)
         _debugLog.value = currentLog
 
         Log.d(TAG, "[$category] $message")
