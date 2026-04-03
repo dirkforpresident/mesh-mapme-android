@@ -1,6 +1,10 @@
 package sh.mapme.mapper.ui.map
 
 import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -13,9 +17,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
+import com.google.accompanist.permissions.rememberPermissionState
+import com.google.accompanist.permissions.isGranted
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
@@ -53,13 +60,23 @@ fun MapScreen(
     var showActivityFeed by viewModel.mapShowActivityFeed
     val followLocation by viewModel.mapFollowLocation.collectAsState()
 
-    // Location permission
+    // Location permission with prominent disclosure
     val locationPermissions = rememberMultiplePermissionsState(
         listOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
         )
     )
+    var showLocationDisclosure by remember { mutableStateOf(false) }
+    var showBackgroundLocationDisclosure by remember { mutableStateOf(false) }
+    val hasBackgroundLocation = ContextCompat.checkSelfPermission(
+        context, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    // Background location permission (must be requested separately on Android 11+)
+    val backgroundLocationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        rememberPermissionState(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+    } else null
 
     // Configure osmdroid once
     LaunchedEffect(Unit) {
@@ -70,7 +87,9 @@ fun MapScreen(
         }
 
         if (!locationPermissions.allPermissionsGranted) {
-            locationPermissions.launchMultiplePermissionRequest()
+            showLocationDisclosure = true
+        } else if (!hasBackgroundLocation) {
+            showBackgroundLocationDisclosure = true
         }
     }
 
@@ -78,7 +97,61 @@ fun MapScreen(
         if (locationPermissions.allPermissionsGranted) {
             viewModel.updatePermissions()
             viewModel.startTracking()
+            // After foreground location granted, ask for background
+            if (!hasBackgroundLocation) {
+                showBackgroundLocationDisclosure = true
+            }
         }
+    }
+
+    // Prominent disclosure dialog for foreground location
+    if (showLocationDisclosure) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Location Access Required") },
+            text = {
+                Text("MeshCore Coverage Mapper needs access to your GPS location to record signal coverage while you drive. Your location is paired with signal strength data to build a community coverage map on mapme.sh.\n\nYou can control visibility in Settings: Live (visible on map), Ghost (anonymous), or Offline (no upload).")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showLocationDisclosure = false
+                    locationPermissions.launchMultiplePermissionRequest()
+                }) {
+                    Text("Continue")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLocationDisclosure = false }) {
+                    Text("Not now")
+                }
+            }
+        )
+    }
+
+    // Prominent disclosure dialog for background location
+    if (showBackgroundLocationDisclosure) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Background Location Access") },
+            text = {
+                Text("Coverage mapping requires GPS access while the app runs in the background. This allows you to keep mapping with the screen off or while using other apps during a drive.\n\nOn the next screen, please select \"Allow all the time\" to enable background mapping.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showBackgroundLocationDisclosure = false
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        backgroundLocationPermission?.launchPermissionRequest()
+                    }
+                }) {
+                    Text("Continue")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBackgroundLocationDisclosure = false }) {
+                    Text("Not now")
+                }
+            }
+        )
     }
 
     // Default to last known position (persisted) instead of hardcoded Hamburg
