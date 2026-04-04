@@ -15,17 +15,8 @@ object Constants {
     // MARK: - H3
     const val H3_RESOLUTION = 10
 
-    // MARK: - Coverage Channel Secret
-    val CHANNEL_SECRET = byteArrayOf(
-        0xf2.toByte(), 0x18.toByte(), 0x98.toByte(), 0x80.toByte(),
-        0x9e.toByte(), 0xbb.toByte(), 0x4f.toByte(), 0xfc.toByte(),
-        0xa4.toByte(), 0xc9.toByte(), 0x12.toByte(), 0xc2.toByte(),
-        0x36.toByte(), 0xb0.toByte(), 0x73.toByte(), 0xf8.toByte()
-    )
-
     // MARK: - App Version
     const val APP_VERSION = "1.0.0"
-    const val DEBUG_BUILD = 84
 
     // MARK: - Server
     const val API_BASE_URL = "https://mapme.sh"

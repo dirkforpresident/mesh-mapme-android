@@ -53,5 +53,11 @@ google-services.json
 # Secrets (API keys)
 secrets.properties
 
+# Environment files
+.env
+
+# Specific keystore
+mapme-release.keystore
+
 # macOS
 .DS_Store

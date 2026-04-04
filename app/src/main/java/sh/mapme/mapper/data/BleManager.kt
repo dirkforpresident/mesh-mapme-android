@@ -10,6 +10,7 @@ import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import sh.mapme.mapper.*
+import sh.mapme.mapper.BuildConfig
 import sh.mapme.mapper.service.MapperService
 import sh.mapme.mapper.util.FeedbackManager
 import java.nio.ByteBuffer
@@ -826,8 +827,10 @@ class BleManager(private val context: Context) {
                     val token = json.optString("token", null)
                     val verified = json.optBoolean("verified", false)
 
-                    Log.d(TAG, "Session Token: ${token?.take(16)}...")
-                    Log.d(TAG, "Verified: $verified")
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "Session Token: ${token?.take(16)}...")
+                        Log.d(TAG, "Verified: $verified")
+                    }
 
                     scope.launch(Dispatchers.Main) {
                         _sessionToken = token
@@ -934,8 +937,10 @@ class BleManager(private val context: Context) {
 
         // Generate random 16-byte key for this session
         sessionChannelKey = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
-        val keyPrefix = sessionChannelKey.take(4).joinToString("") { "%02x".format(it) }
-        Log.d(TAG, "Generated session key: $keyPrefix...")
+        if (BuildConfig.DEBUG) {
+            val keyPrefix = sessionChannelKey.take(4).joinToString("") { "%02x".format(it) }
+            Log.d(TAG, "Generated session key: $keyPrefix...")
+        }
 
         // Start checking from channel 0
         pendingChannelCheck = 0
@@ -1155,14 +1160,6 @@ class BleManager(private val context: Context) {
         lastFragmentSize = data.size
         bufferTimedOut = false  // Reset timeout flag on new data
 
-        // Enhanced logging for signature debugging
-        if (waitingForSignature) {
-            // Log.d(TAG, "DEBUG: Received while waiting for signature. First byte: 0x${"%02x".format(data[0])}")
-            if (rxBuffer.isNotEmpty()) {
-                // Log.d(TAG, "DEBUG: Buffer first byte: 0x${"%02x".format(rxBuffer[0])}, total size: ${rxBuffer.size}")
-            }
-        }
-
         // Cancel pending timeout
         bufferTimeoutJob?.cancel()
 
@@ -1183,11 +1180,6 @@ class BleManager(private val context: Context) {
 
         val firstByte = rxBuffer[0]
         val code = firstByte.toInt() and 0xFF
-
-        // Debug logging for signature detection
-        if (waitingForSignature) {
-            // Log.d(TAG, "DEBUG: processBuffer() code=0x${"%02x".format(code)}, size=${rxBuffer.size}, waiting=true")
-        }
 
         // Push codes (0x80+) - process entire buffer as one message
         val pushCode = PushCode.fromByte(firstByte)
@@ -1287,9 +1279,6 @@ class BleManager(private val context: Context) {
 
         // Other response codes
         val responseCode = ResponseCode.fromByte(firstByte)
-        if (waitingForSignature) {
-            // Log.d(TAG, "DEBUG: Checking ResponseCode for 0x${"%02x".format(code)}, result=$responseCode")
-        }
         if (responseCode != null) {
             val minSize = when (responseCode) {
                 ResponseCode.OK -> 1
@@ -1322,15 +1311,11 @@ class BleManager(private val context: Context) {
 
             // SIGNATURE is exactly 65 bytes - wait for complete message
             if (responseCode == ResponseCode.SIGNATURE) {
-                // Log.d(TAG, "DEBUG: *** SIGNATURE CODE 0x14 DETECTED! *** Buffer: ${rxBuffer.size} bytes")
-                // Log.d(TAG, "DEBUG: Buffer hex: ${rxBuffer.sliceArray(0 until minOf(10, rxBuffer.size)).toHexString()}...")
                 if (rxBuffer.size >= 65) {
-                    // Log.d(TAG, "DEBUG: Signature complete (${rxBuffer.size}B) - calling handleResponse")
                     handleResponse(responseCode, rxBuffer)
                     rxBuffer = byteArrayOf()
                     return
                 } else {
-                    // Log.d(TAG, "DEBUG: Signature incomplete (have ${rxBuffer.size}, need 65) - waiting for more")
                     startBufferTimeout()
                     return
                 }
@@ -1403,9 +1388,6 @@ class BleManager(private val context: Context) {
             ResponseCode.OK -> {
                 log("RX", "OK", "green")
                 // If we're waiting for signature and got OK, signature should follow in next message
-                if (waitingForSignature) {
-                    // Log.d(TAG, "DEBUG: Got OK response, signature (0x14) should follow in next BLE notification")
-                }
             }
             ResponseCode.ERR -> log("RX", "Error", "red")
             ResponseCode.CONTACTS_START -> {
@@ -1575,16 +1557,10 @@ class BleManager(private val context: Context) {
         }
 
         // Ignore if signing not in progress (unexpected SignatureReady)
-        if (!signingInProgress) {
-            // Log.d(TAG, "DEBUG: SignatureReady ignored - signing not in progress")
-            return
-        }
+        if (!signingInProgress) return
 
         // Ignore if we already started processing SignatureReady
-        if (waitingForSignature) {
-            // Log.d(TAG, "DEBUG: SignatureReady ignored - already processing")
-            return
-        }
+        if (waitingForSignature) return
 
         // Mark as processing IMMEDIATELY to prevent duplicate SignatureReady handling
         waitingForSignature = true
@@ -1593,13 +1569,11 @@ class BleManager(private val context: Context) {
         buffer.get() // Skip code
         buffer.get() // Skip reserved
         maxSignDataLen = buffer.int
-        // Log.d(TAG, "DEBUG: SignatureReady received! maxSignDataLen=$maxSignDataLen")
         log("RX", "Sign ready", "green")
 
         // Continue signing flow with challenge data
         scope.launch {
             delay(300)  // Delay to give device time
-            // Log.d(TAG, "DEBUG: Continuing with challenge data...")
             continueSigningWithData()
         }
     }
@@ -1657,8 +1631,10 @@ class BleManager(private val context: Context) {
         val name = nameBytes.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
         val secret = data.sliceArray(34 until 50)
 
-        val secretPrefix = secret.take(4).joinToString("") { "%02x".format(it) }
-        Log.d(TAG, "ChannelInfo - idx: $channelIdx, name: '$name', secret: $secretPrefix...")
+        if (BuildConfig.DEBUG) {
+            val secretPrefix = secret.take(4).joinToString("") { "%02x".format(it) }
+            Log.d(TAG, "ChannelInfo - idx: $channelIdx, name: '$name', secret: $secretPrefix...")
+        }
 
         // Accept channel info even if index doesn't match expected (faster channel syncing)
         if (channelIdx != pendingChannelCheck) {
@@ -1957,19 +1933,15 @@ class BleManager(private val context: Context) {
         // Signature Response (0x14):
         // - Byte 0: Response Code (0x14)
         // - Bytes 1-64: signature (64 bytes Ed25519)
-        // Log.d(TAG, "DEBUG: parseSignature called with ${data.size} bytes!")
         waitingForSignature = false
 
         if (data.size < 65) {
-            // Log.d(TAG, "DEBUG: Signature too short: ${data.size} bytes, expected 65")
             log("RX", "Signature incomplete (${data.size}B)", "red")
             return
         }
 
         val signature = data.sliceArray(1 until 65)
         val sigHex = signature.joinToString("") { "%02x".format(it) }
-        // Log.d(TAG, "DEBUG: SIGNATURE RECEIVED! ${data.size}B")
-        // Log.d(TAG, "DEBUG: Signature hex: $sigHex")
         log("RX", "Signature OK!", "green")
 
         // Verify and create server session
@@ -2326,11 +2298,11 @@ class BleManager(private val context: Context) {
 
             // Skip first 3 bytes (channel_hash: 1B, MAC: 2B)
             val encrypted = payload.sliceArray(3 until payload.size)
-            Log.d(TAG, "AES: encrypted=${encrypted.size}B key=${sessionChannelKey.take(4).toByteArray().toHexString()}")
+            if (BuildConfig.DEBUG) Log.d(TAG, "AES: encrypted=${encrypted.size}B key=${sessionChannelKey.take(4).toByteArray().toHexString()}")
 
             // AES-ECB requires data to be multiple of 16 bytes
             if (encrypted.isEmpty() || encrypted.size % 16 != 0) {
-                Log.d(TAG, "AES: invalid length ${encrypted.size}")
+                if (BuildConfig.DEBUG) Log.d(TAG, "AES: invalid length ${encrypted.size}")
                 return null
             }
 
@@ -2339,7 +2311,7 @@ class BleManager(private val context: Context) {
             cipher.init(Cipher.DECRYPT_MODE, keySpec)
 
             val decrypted = cipher.doFinal(encrypted)
-            Log.d(TAG, "AES: decrypted raw=${decrypted.take(20).toByteArray().toHexString()}")
+            if (BuildConfig.DEBUG) Log.d(TAG, "AES: decrypted raw=${decrypted.take(20).toByteArray().toHexString()}")
 
             // Decrypted format: [timestamp: 4 bytes][null][text...]
             // Skip first 4 bytes (timestamp), then skip leading nulls, then extract text
@@ -2354,7 +2326,7 @@ class BleManager(private val context: Context) {
 
             val textBytes = decrypted.sliceArray(textStart until textEnd)
             val result = textBytes.decodeToString()
-            Log.d(TAG, "AES: text='$result' (bytes $textStart..$textEnd)")
+            if (BuildConfig.DEBUG) Log.d(TAG, "AES: text='$result' (bytes $textStart..$textEnd)")
             return result
         } catch (e: Exception) {
             Log.d(TAG, "Decrypt failed: ${e.message}")

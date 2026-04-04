@@ -17,6 +17,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import sh.mapme.mapper.BuildConfig
 import sh.mapme.mapper.Constants
 import sh.mapme.mapper.MainViewModel
 import sh.mapme.mapper.R
@@ -512,7 +513,7 @@ fun HomeScreen(
         item {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "v${Constants.APP_VERSION} (b${Constants.DEBUG_BUILD})",
+                text = "v${Constants.APP_VERSION} (b${BuildConfig.VERSION_CODE})",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

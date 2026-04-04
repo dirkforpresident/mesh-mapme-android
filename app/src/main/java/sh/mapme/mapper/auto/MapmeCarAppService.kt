@@ -12,7 +12,10 @@ class MapmeCarAppService : CarAppService() {
         return if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
         } else {
-            HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
+            // In release builds, restrict to known Android Auto hosts
+            HostValidator.Builder(applicationContext)
+                .addAllowedHosts(androidx.car.app.R.array.hosts_allowlist_sample)
+                .build()
         }
     }
 
