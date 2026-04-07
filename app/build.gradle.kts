@@ -6,13 +6,14 @@ plugins {
 android {
     namespace = "sh.mapme.mapper"
     compileSdk = 35
+    ndkVersion = "27.1.12297006"
 
     defaultConfig {
         applicationId = "sh.mapme.mapper"
         minSdk = 26
         targetSdk = 35
-        versionCode = 89
-        versionName = "1.0.1"
+        versionCode = 90
+        versionName = "1.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
