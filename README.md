@@ -1,6 +1,6 @@
 # MeshCore Coverage Mapper
 
-Map the coverage of the [MeshCore](https://meshcore.net) LoRa mesh network — right from your phone.
+Map the coverage of the [MeshCore](https://meshcore.co.uk) LoRa mesh network — right from your phone.
 
 Connect your MeshCore device via Bluetooth, drive around, and the app records signal coverage automatically. Data is uploaded to [mapme.sh](https://mapme.sh) where it becomes part of the community coverage map.
 
@@ -36,7 +36,7 @@ No account required. No ads, no tracking, no analytics.
 ## How it works
 
 1. Your phone connects to a MeshCore node via BLE
-2. The app tracks your GPS position and listens for mesh signals
+2. The app uses your Android device's GPS to track your position and listens for mesh signals
 3. Each position is mapped to an H3 hexagon (~15m resolution)
 4. Signal strength from nearby repeaters is recorded
 5. Data is uploaded to mapme.sh with cryptographic verification
@@ -45,8 +45,9 @@ No account required. No ads, no tracking, no analytics.
 ## Links
 
 - [mapme.sh](https://mapme.sh) — Live coverage map
-- [MeshCore](https://meshcore.net) — Mesh network firmware
-- [HanseMesh](https://hansemesh.de) — Community
+- [MeshCore](https://meshcore.co.uk) — Mesh network firmware
+- [HanseMesh](https://hansemesh.de) — German MeshCore community
+- [elektronikreich.de](https://elektronikreich.de) — MeshCore devices & accessories
 
 ## License
 
