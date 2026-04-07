@@ -37,7 +37,7 @@ No account required. No ads, no tracking, no analytics.
 
 1. Your phone connects to a MeshCore node via BLE
 2. The app uses your Android device's GPS to track your position and listens for mesh signals
-3. Each position is mapped to an H3 hexagon (~15m resolution)
+3. Each position is mapped to an H3 hexagon (resolution 10, ~66m edge length)
 4. Signal strength from nearby repeaters is recorded
 5. Data is uploaded to mapme.sh with cryptographic verification
 6. The community coverage map grows with every drive
