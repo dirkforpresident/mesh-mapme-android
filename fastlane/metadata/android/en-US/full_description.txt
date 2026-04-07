@@ -1,0 +1,16 @@
+MeshCore Coverage Mapper connects to MeshCore LoRa mesh radio devices via Bluetooth Low Energy and maps their signal coverage in real-time.
+
+Drive around while the app records GPS coordinates and received signal strength (RSSI) from nearby mesh nodes. Coverage data is visualized as colored H3 hexagons on an OpenStreetMap base layer and uploaded to mapme.sh — the community coverage map.
+
+Features:
+* Connect to any MeshCore device via Bluetooth Low Energy
+* Real-time signal mapping with GPS tracking
+* H3 hexagon coverage visualization with RSSI color coding
+* Dark and light map themes
+* Session statistics (hexes, samples, uploads, battery)
+* Contact discovery and RSSI display
+* Privacy modes: Live, Normal (3h delay), Ghost (24h delay)
+* Background mapping with foreground service
+* Android Auto support
+
+No account required. No ads, no tracking, no analytics.
