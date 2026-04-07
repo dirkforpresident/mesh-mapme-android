@@ -11,8 +11,8 @@ android {
         applicationId = "sh.mapme.mapper"
         minSdk = 26
         targetSdk = 35
-        versionCode = 88
-        versionName = "1.0.0"
+        versionCode = 89
+        versionName = "1.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -103,8 +103,7 @@ dependencies {
     // OpenStreetMap (osmdroid) - free, no API key needed
     implementation("org.osmdroid:osmdroid-android:6.1.18")
 
-    // Location services
-    implementation("com.google.android.gms:play-services-location:21.1.0")
+    // Location services (Android LocationManager, no GMS dependency)
 
     // H3 Hexagonal Indexing - built from source via NDK (see cpp folder)
 
@@ -116,7 +115,6 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
 
     // DataStore for persistence
     implementation("androidx.datastore:datastore-preferences:1.0.0")
