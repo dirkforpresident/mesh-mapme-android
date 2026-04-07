@@ -1,63 +1,53 @@
 # MeshCore Coverage Mapper
 
-Android companion app for mapping MeshCore mesh network coverage via BLE-connected nodes.
+Map the coverage of the [MeshCore](https://meshcore.net) LoRa mesh network — right from your phone.
 
-![Screenshot placeholder](docs/screenshot.png)
+Connect your MeshCore device via Bluetooth, drive around, and the app records signal coverage automatically. Data is uploaded to [mapme.sh](https://mapme.sh) where it becomes part of the community coverage map.
 
-## Build
+![Screenshot](docs/screenshot.png)
 
-### Requirements
+## Download
 
-- Android Studio (Hedgehog or newer)
-- JDK 17
-- Android NDK (for H3 hex indexing native library)
-- Android SDK 35
+- **Google Play** — Closed Beta (coming soon)
+- **F-Droid** — Submitted, pending review
+- **Direct APK** — [Download latest release](https://github.com/dirkforpresident/mesh-mapme-android/releases/latest)
 
-### Steps
+## Features
 
-1. Clone the repository
-2. Open in Android Studio
-3. Sync Gradle
-4. Build and run on a device with Bluetooth LE support (emulators won't work for BLE)
-
-For release builds, set these environment variables:
-
-```
-RELEASE_STORE_FILE=/path/to/your.keystore
-RELEASE_STORE_PASSWORD=...
-RELEASE_KEY_ALIAS=...
-RELEASE_KEY_PASSWORD=...
-```
-
-## How it works
-
-1. **BLE Connection** -- The app connects to a MeshCore node (companion device) over Bluetooth Low Energy using the Nordic UART Service (NUS).
-2. **GPS Tracking** -- While connected, the app continuously tracks your location using Android's fused location provider.
-3. **Hex Mapping** -- Each GPS position is converted to an H3 hexagonal index (resolution 10, ~15m edge length) using the H3 library built from C source via NDK.
-4. **Coverage TX** -- The app periodically sends coverage test messages through the mesh network and listens for responses from nearby repeaters.
-5. **Upload** -- Collected coverage samples (hex index, signal strength, repeater info) are uploaded to the [mapme.sh](https://mapme.sh) backend for visualization on the public coverage map.
-6. **Verification** -- Device identity is cryptographically verified using Ed25519 challenge-response signing to prevent spoofed data.
+- Connect to any MeshCore device via Bluetooth Low Energy
+- Real-time signal mapping with GPS tracking
+- H3 hexagon coverage visualization with RSSI color coding
+- Dark and light map themes
+- Session statistics (hexes, RX count, uploads, battery)
+- Contact discovery and RSSI display
+- Background mapping — keep mapping with the screen off
+- Android Auto support
 
 ## Privacy Modes
 
-The app supports three privacy modes that control when coverage data is uploaded:
+| Mode | Behavior |
+|------|----------|
+| **Live** | Instant upload, visible on map in real-time |
+| **Normal** | Data uploaded with 3-hour delay |
+| **Ghost** | Data uploaded with 24-hour delay, anonymous |
 
-| Mode | Label | Behavior |
-|------|-------|----------|
-| `live` | **Live** | Instant upload with adaptive TX timing |
-| `normal` | **Normal** | Data uploaded with a 3-hour delay |
-| `anonym` | **Ghost** | Data uploaded with a 24-hour delay |
+No account required. No ads, no tracking, no analytics.
 
-All modes collect the same data. The delay modes batch uploads so your movement patterns are harder to correlate with real-time location.
+## How it works
 
-## Android Auto
-
-The app includes Android Auto support for hands-free coverage mapping while driving.
-
-## License
-
-MIT License. See [LICENSE](LICENSE).
+1. Your phone connects to a MeshCore node via BLE
+2. The app tracks your GPS position and listens for mesh signals
+3. Each position is mapped to an H3 hexagon (~15m resolution)
+4. Signal strength from nearby repeaters is recorded
+5. Data is uploaded to mapme.sh with cryptographic verification
+6. The community coverage map grows with every drive
 
 ## Links
 
-- [mapme.sh](https://mapme.sh) -- Live coverage map
+- [mapme.sh](https://mapme.sh) — Live coverage map
+- [MeshCore](https://meshcore.net) — Mesh network firmware
+- [HanseMesh](https://hansemesh.de) — Community
+
+## License
+
+MIT — see [LICENSE](LICENSE)
