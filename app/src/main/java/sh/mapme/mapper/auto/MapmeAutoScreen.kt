@@ -3,7 +3,6 @@ package sh.mapme.mapper.auto
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.model.*
-import androidx.car.app.navigation.model.*
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.*
@@ -12,7 +11,8 @@ import sh.mapme.mapper.MapmeApp
 
 /**
  * Android Auto screen showing live mapping stats.
- * Uses NavigationTemplate (required for navigation category apps).
+ * App is declared as navigation category in automotive_app_desc.xml.
+ * Uses PaneTemplate to display mapping status on the car screen.
  */
 class MapmeAutoScreen(carContext: CarContext) : Screen(carContext) {
 
@@ -41,6 +41,7 @@ class MapmeAutoScreen(carContext: CarContext) : Screen(carContext) {
             val app = MapmeApp.instance
             val bleManager = app.bleManager
 
+            // Refresh screen every 3 seconds
             combine(
                 bleManager.isConnected,
                 bleManager.rxCount,
@@ -81,7 +82,6 @@ class MapmeAutoScreen(carContext: CarContext) : Screen(carContext) {
         val lastPacket = bleManager.recentRxPackets.value.firstOrNull()
         val isReconnecting = bleManager.isReconnecting.value
 
-        // Build info text for the navigation info area
         val statusText = when {
             !isConnected && isReconnecting -> "Reconnecting..."
             !isConnected -> "Not Connected"
@@ -97,35 +97,32 @@ class MapmeAutoScreen(carContext: CarContext) : Screen(carContext) {
 
         val lastActivity = if (isConnected && lastPacket != null) {
             val repeater = lastPacket.path.lastOrNull() ?: "?"
-            "via $repeater (${lastPacket.rssi} dBm)"
+            "Last: $repeater (${lastPacket.rssi} dBm)"
         } else {
-            "Waiting for signal..."
+            "No activity yet"
         }
 
-        // Navigation info with mapping stats as "directions"
-        val stepBuilder = Step.Builder(lastActivity)
-            .setRoad(statusText)
-
-        val navInfo = NavigationInfo.Builder()
-            .setCurrentStep(stepBuilder.build(), Distance.create(0.0, Distance.UNIT_METERS))
-            .build()
-
-        val builder = NavigationTemplate.Builder()
-            .setNavigationInfo(navInfo)
-
-        // Action strip with app info
-        builder.setActionStrip(
-            ActionStrip.Builder()
-                .addAction(
-                    Action.Builder()
-                        .setTitle("Mapme.sh")
-                        .setOnClickListener { /* no-op */ }
-                        .build()
-                )
+        val paneBuilder = Pane.Builder()
+        paneBuilder.addRow(
+            Row.Builder()
+                .setTitle(statusText)
+                .addText(lastActivity)
                 .build()
         )
 
-        return builder.build()
+        if (isConnected) {
+            paneBuilder.addRow(
+                Row.Builder()
+                    .setTitle("Session Active")
+                    .addText("GPS tracking and auto-discovery running")
+                    .build()
+            )
+        }
+
+        return PaneTemplate.Builder(paneBuilder.build())
+            .setTitle("Mapme.sh Mapper")
+            .setHeaderAction(Action.APP_ICON)
+            .build()
     }
 
     private data class AutoData(
