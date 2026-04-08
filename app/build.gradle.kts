@@ -123,8 +123,9 @@ dependencies {
     // Permissions
     implementation("com.google.accompanist:accompanist-permissions:0.34.0")
 
-    // Android Auto
+    // Android Auto (Navigation category)
     implementation("androidx.car.app:app:1.4.0")
+    implementation("androidx.car.app:app-projected:1.4.0")
 
     // Testing
     testImplementation("junit:junit:4.13.2")
