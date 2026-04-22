@@ -37,7 +37,10 @@ fun DeviceScreen(
 ) {
     val isConnected by viewModel.isConnected.collectAsState()
 
-    // BLE and Notification Permissions
+    // BLE, Location and Notification Permissions
+    // Location is requested up front because BLE scans on Android 12+ still require
+    // it when the app declares ACCESS_FINE_LOCATION in the manifest (which we need
+    // anyway for GPS coverage mapping). Without it, scans silently return no results.
     val permissions = buildList {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             add(Manifest.permission.BLUETOOTH_SCAN)
@@ -45,8 +48,9 @@ fun DeviceScreen(
         } else {
             add(Manifest.permission.BLUETOOTH)
             add(Manifest.permission.BLUETOOTH_ADMIN)
-            add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
+        add(Manifest.permission.ACCESS_FINE_LOCATION)
+        add(Manifest.permission.ACCESS_COARSE_LOCATION)
         // Notification permission for Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.POST_NOTIFICATIONS)
@@ -91,7 +95,7 @@ fun PermissionScreen(onRequestPermission: () -> Unit) {
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = "Bluetooth Permission Required",
+            text = "Permissions Required",
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.SemiBold
         )
@@ -99,7 +103,7 @@ fun PermissionScreen(onRequestPermission: () -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "We need Bluetooth access to connect to your MeshCore device",
+            text = "We need Bluetooth access to connect to your MeshCore device, and Location access for BLE scanning and GPS coverage mapping.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
