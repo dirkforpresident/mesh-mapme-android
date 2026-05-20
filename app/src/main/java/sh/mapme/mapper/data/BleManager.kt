@@ -1728,58 +1728,46 @@ class BleManager(private val context: Context) {
     }
 
     private fun parseLogRxData(data: ByteArray) {
-        // iOS format:
-        // [0x88][SNR*4: 1 byte signed][RSSI: 1 byte signed][header: 1 byte][pathLen: 1 byte][path: pathLen bytes][payload...]
+        // BLE companion wrapper: [0x88][SNR*4: signed][RSSI: signed], then MeshCore wire format from offset 3.
+        // Wire format: header [+ 4B transport_codes] + packed path_len_byte + path + payload.
         if (data.size < 5) return
 
         try {
-            val buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-            buffer.get() // Skip code byte (0x88)
-
-            // SNR is first (multiplied by 4), then RSSI
-            val snrRaw = buffer.get().toInt()  // Signed byte
+            val snrRaw = data[1].toInt()  // signed byte
             val snr = snrRaw / 4.0f
-            val rssi = normalizeRssi(buffer.get().toInt())  // Signed byte
-            val header = buffer.get().toInt() and 0xFF
-            val pathLen = buffer.get().toInt() and 0xFF
+            val rssi = normalizeRssi(data[2].toInt())  // signed byte
 
-            if (data.size < 5 + pathLen) return
-
-            // Parse path - EACH HOP IS 1 BYTE! (not 4 bytes)
-            val path = mutableListOf<String>()
-            repeat(pathLen) {
-                if (buffer.remaining() >= 1) {
-                    val hopByte = buffer.get().toInt() and 0xFF
-                    if (hopByte != 0) {  // Filter out zeros like iOS
-                        path.add("%02x".format(hopByte))
-                    }
-                }
+            val decoded = try {
+                MeshCorePacket.decode(data, headerOffset = 3)
+            } catch (e: MeshCorePacket.DecodeError.DoNotRetransmit) {
+                Log.d(TAG, "LogRxData: 0xFF do-not-retransmit marker, ignoring")
+                return
+            } catch (e: MeshCorePacket.DecodeError) {
+                Log.d(TAG, "LogRxData: dropping malformed packet — ${e.message}")
+                return
             }
 
-            // Extract payload (after path)
-            val payloadStart = 5 + pathLen
-            val payload = if (data.size > payloadStart) {
-                data.sliceArray(payloadStart until data.size)
+            val path = decoded.hops
+            val payload = if (data.size > decoded.payloadOffset) {
+                data.sliceArray(decoded.payloadOffset until data.size)
             } else {
                 byteArrayOf()
             }
 
-            // Check if payload contains embedded DISCOVER_REPLY (0x8E) when pathLen=0
+            // Check if payload contains embedded DISCOVER_REPLY (0x8E) when path is empty
             if (path.isEmpty() && payload.isNotEmpty()) {
-                // Look for 0x8E in payload - might be embedded discover reply
                 val discoverReplyIndex = payload.indexOfFirst { it == 0x8E.toByte() }
                 if (discoverReplyIndex >= 0 && payload.size >= discoverReplyIndex + 42) {
                     Log.d(TAG, "Found embedded DISCOVER_REPLY at offset $discoverReplyIndex")
                     val discoverData = payload.sliceArray(discoverReplyIndex until payload.size)
                     parseDiscoverReply(discoverData)
                 }
-                Log.d(TAG, "LogRxData: path empty (pathLen=$pathLen), processed for embedded replies")
+                Log.d(TAG, "LogRxData: path empty (hopCount=${decoded.hopCount}), processed for embedded replies")
                 return
             }
 
-            // Get payload type from header: (header >> 2) & 0x0F
-            val payloadType = (header shr 2) and 0x0F
-            Log.d(TAG, "LogRxData: rssi=$rssi snr=$snr path=${path.joinToString(">")} payloadType=$payloadType payload=${payload.size}B")
+            val payloadType = decoded.payloadType
+            Log.d(TAG, "LogRxData: rssi=$rssi snr=$snr hashSize=${decoded.hashSize} route=${decoded.routeType} path=${path.joinToString(">")} payloadType=$payloadType payload=${payload.size}B")
 
             // Check if this is our TX bounced back from a repeater (GRP_TXT = 0x05)
             // Decrypt the payload and verify it contains our signature
