@@ -174,7 +174,11 @@ class HexService {
                 // Build request body matching iOS format
                 val pubkeyHex = selfInfo?.publicKey?.joinToString("") { "%02x".format(it) } ?: ""
                 val hardware = deviceInfo?.hardware ?: ""
-                val freqMHz = (selfInfo?.radioFreq ?: 0) / 1000.0  // Convert kHz to MHz
+                // Convert kHz to MHz. Some firmware (LilyGo T-Echo, Seeed Wio Tracker L1) puts
+                // garbage into the radioFreq slot — drop to 0 (server treats as NULL) instead of
+                // uploading bogus presets.
+                val rawFreqMHz = (selfInfo?.radioFreq ?: 0) / 1000.0
+                val freqMHz = if (rawFreqMHz in 100.0..1100.0) rawFreqMHz else 0.0
 
                 val bodyJson = org.json.JSONObject().apply {
                     put("d", pubkeyHex)
