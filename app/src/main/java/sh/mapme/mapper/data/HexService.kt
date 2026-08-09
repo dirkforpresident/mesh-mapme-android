@@ -160,7 +160,9 @@ class HexService {
         samples: List<Sample>,
         sessionToken: String?,
         selfInfo: SelfInfo?,
-        deviceInfo: DeviceInfo?
+        deviceInfo: DeviceInfo?,
+        fallbackPubkeyHex: String = "",
+        fallbackNodeName: String = ""
     ): Boolean {
         return withContext(Dispatchers.IO) {
             if (sessionToken == null) {
@@ -172,7 +174,15 @@ class HexService {
                 val url = "${Constants.API_BASE_URL}/api/samples"
 
                 // Build request body matching iOS format
-                val pubkeyHex = selfInfo?.publicKey?.joinToString("") { "%02x".format(it) } ?: ""
+                val pubkeyHex = (selfInfo?.publicKey?.joinToString("") { "%02x".format(it) } ?: "")
+                    .ifEmpty { fallbackPubkeyHex }
+                if (pubkeyHex.isEmpty()) {
+                    // Lieber im Puffer behalten als herrenlos hochladen — Identität
+                    // kommt spätestens mit der nächsten BLE-Verbindung
+                    Log.e(TAG, "Upload skipped: no node identity known yet")
+                    return@withContext false
+                }
+                val nodeName = (selfInfo?.nodeName ?: "").ifEmpty { fallbackNodeName }
                 val hardware = deviceInfo?.hardware ?: ""
                 // Convert kHz to MHz. Some firmware (LilyGo T-Echo, Seeed Wio Tracker L1) puts
                 // garbage into the radioFreq slot — drop to 0 (server treats as NULL) instead of
@@ -182,7 +192,7 @@ class HexService {
 
                 val bodyJson = org.json.JSONObject().apply {
                     put("d", pubkeyHex)
-                    put("n", selfInfo?.nodeName ?: "")
+                    put("n", nodeName)
                     put("dt", "and")  // Android device type
                     put("hw", hardware)
                     put("freq", freqMHz)

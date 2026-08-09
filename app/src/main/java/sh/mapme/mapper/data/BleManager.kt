@@ -1498,8 +1498,7 @@ class BleManager(private val context: Context) {
 
             if (data.size > 57) {
                 val nameBytes = data.sliceArray(57 until data.size)
-                nodeName = nameBytes.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
-                    .trim { it <= ' ' || it.code == 0 }
+                nodeName = sanitizeNodeName(nameBytes)
             }
 
             Log.d(TAG, "SelfInfo parsed: nodeName='$nodeName', freq=$radioFreq, sf=$radioSf, cr=$radioCr")
@@ -1877,7 +1876,7 @@ class BleManager(private val context: Context) {
 
             if (hasName && payload.size > offset) {
                 val nameBytes = payload.sliceArray(offset until payload.size)
-                name = nameBytes.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
+                name = sanitizeNodeName(nameBytes)
                 Log.d(TAG, "  name: '$name'")
             }
 
@@ -2268,6 +2267,20 @@ class BleManager(private val context: Context) {
     }
 
     // MARK: - Helpers
+
+    /**
+     * Advert-Namen sind NICHT null-terminiert: alles, was im Paket nach dem
+     * Namen kommt (Padding/Folgedaten), klebte früher als Binärmüll am Namen
+     * (~3.9k Müll-Nodes in der mapme.sh-DB, auch echte Namen mit Anhängseln).
+     * Schnitt an Null-/Steuerzeichen, kaputte UTF-8-Sequenzen kappen, Länge deckeln.
+     */
+    private fun sanitizeNodeName(bytes: ByteArray): String {
+        val cut = bytes.takeWhile { it != 0.toByte() && (it.toInt() and 0xFF) >= 0x20 }.toByteArray()
+        var s = cut.decodeToString()
+        val bad = s.indexOf('�')
+        if (bad >= 0) s = s.substring(0, bad)
+        return s.trim().take(40)
+    }
 
     private fun readString(buffer: ByteBuffer, maxLength: Int): String {
         val bytes = ByteArray(maxLength)

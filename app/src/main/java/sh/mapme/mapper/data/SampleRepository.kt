@@ -23,6 +23,11 @@ class SampleRepository(private val context: Context) {
         private const val TAG = "SampleRepository"
         private val SAMPLES_KEY = stringPreferencesKey("pending_samples")
         private val TOTAL_UPLOADED_KEY = intPreferencesKey("total_uploaded")
+        // Letzte bekannte Node-Identität: Uploads laufen auch ohne aktive
+        // BLE-Verbindung (Puffer-Nachzügler) — ohne Fallback gingen die früher
+        // komplett ohne pk/d raus (herrenlose Samples auf mapme.sh)
+        private val LAST_PUBKEY_KEY = stringPreferencesKey("last_node_pubkey")
+        private val LAST_NAME_KEY = stringPreferencesKey("last_node_name")
     }
 
     private val gson = Gson()
@@ -128,12 +133,30 @@ class SampleRepository(private val context: Context) {
                 Log.d(TAG, "Uploading with unverified session (server may reject)")
             }
 
+            // Identität merken bzw. auffüllen. SelfInfo liefert den nodeName in
+            // der Praxis oft leer — dann nehmen wir den BLE-Gerätenamen (wie die
+            // Geräte-Ansicht) und zur Not die zuletzt gespeicherte Identität.
+            val self = ble.selfInfo.value
+            val selfPubkey = self?.publicKey?.joinToString("") { "%02x".format(it) } ?: ""
+            val selfName = (self?.nodeName ?: "").ifEmpty { ble.connectedDeviceName.value ?: "" }
+            if (selfPubkey.isNotEmpty()) {
+                context.dataStore.edit { prefs ->
+                    prefs[LAST_PUBKEY_KEY] = selfPubkey
+                    if (selfName.isNotEmpty()) prefs[LAST_NAME_KEY] = selfName
+                }
+            }
+            val storedPrefs = context.dataStore.data.first()
+            val fallbackPubkey = storedPrefs[LAST_PUBKEY_KEY] ?: ""
+            val fallbackName = selfName.ifEmpty { storedPrefs[LAST_NAME_KEY] ?: "" }
+
             try {
                 val success = service.uploadSamples(
                     samples = samplesToUpload,
                     sessionToken = token,
                     selfInfo = ble.selfInfo.value,
-                    deviceInfo = ble.deviceInfo.value
+                    deviceInfo = ble.deviceInfo.value,
+                    fallbackPubkeyHex = fallbackPubkey,
+                    fallbackNodeName = fallbackName
                 )
                 if (success) {
                     // Remove uploaded samples
