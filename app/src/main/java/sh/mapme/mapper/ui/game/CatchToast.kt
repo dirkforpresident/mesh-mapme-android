@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import sh.mapme.mapper.data.GhostHuntManager
+import sh.mapme.mapper.data.GhostKind
 
 /**
  * CatchToast — Fang-Meldung während der Fahrt (Task 5).
@@ -68,7 +69,10 @@ fun CatchToastHost(hunt: GhostHuntManager, modifier: Modifier = Modifier) {
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF86EFAC),
                             style = MaterialTheme.typography.titleSmall)
-                        Text("ins Album gelegt",
+                        Text(
+                            if (e.ghost.kind == GhostKind.BERGGEIST)
+                                "Du stehst auf einer der höchsten Erhebungen der Gegend — idealer Standort für einen Solar-Repeater! 📡"
+                            else "ins Album gelegt",
                             style = MaterialTheme.typography.labelSmall,
                             color = Color(0xFF86EFAC).copy(alpha = 0.8f))
                     }
