@@ -109,6 +109,17 @@ class AlbumStore(context: Context) {
         persist()
     }
 
+    /** Selbstheilung: Seed-Karten trugen frueher die Import- statt der
+     *  Fangzeit — echte (fruehere) Zeit aus dem Feed uebernehmen. */
+    fun fixDate(ghostId: Long, realDate: Long) {
+        val i = _cards.value.indexOfFirst { it.ghostId == ghostId }
+        if (i < 0 || _cards.value[i].caughtAt <= realDate) return
+        _cards.value = _cards.value.toMutableList().also {
+            it[i] = it[i].copy(caughtAt = realDate)
+        }
+        persist()
+    }
+
     /** Karte per Mesh-Tausch erhalten. */
     fun addTraded(card: AlbumCard, fromPubkey: String) {
         if (has(card.ghostId)) return

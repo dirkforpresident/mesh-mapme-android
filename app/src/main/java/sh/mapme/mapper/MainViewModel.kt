@@ -113,12 +113,17 @@ class MainViewModel : ViewModel() {
                     .filter { it.type == "ghost" && it.pubkey == pk && it.ghostId != null }
                     .forEach { e ->
                         val kind = sh.mapme.mapper.data.GhostKind.fromWire(e.what) ?: return@forEach
-                        if (!albumStore.has(e.ghostId!!)) {
+                        // echte Fangzeit aus dem Feed — nicht der Import-Moment
+                        val realTime = try { java.time.Instant.parse(e.caughtAt).toEpochMilli() }
+                            catch (ex: Exception) { System.currentTimeMillis() }
+                        if (albumStore.has(e.ghostId!!)) {
+                            albumStore.fixDate(e.ghostId, realTime)
+                        } else {
                             albumStore.addCaught(
                                 sh.mapme.mapper.data.Ghost(
                                     e.ghostId, kind, e.lat ?: 0.0, e.lon ?: 0.0,
                                     e.points, null, ""),
-                                e.points)
+                                e.points, realTime)
                         }
                     }
             }
