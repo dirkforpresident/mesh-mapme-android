@@ -48,6 +48,8 @@ class MainViewModel : ViewModel() {
     val totalUploaded = sampleRepository.totalUploaded
 
     val serverHexes = hexService.serverHexes
+    val ghosts = hexService.ghosts
+    val gameFeed = hexService.gameFeed
     val liveMappers = hexService.liveMappers
     val leaderboard = hexService.leaderboard
     val ownRank = hexService.ownRank
@@ -122,4 +124,6 @@ class MainViewModel : ViewModel() {
     fun refreshLeaderboard() = hexService.fetchLeaderboard()
     fun clearPendingSamples() = sampleRepository.clearAll()
     fun setCoverageDays(days: Int) = hexService.setCoverageDays(days)
+    fun refreshGhosts(force: Boolean = false) = hexService.fetchGhosts(force)
+    fun refreshGameFeed() = hexService.fetchGameFeed()
 }

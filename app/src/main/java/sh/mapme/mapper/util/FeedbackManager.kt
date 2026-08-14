@@ -39,6 +39,38 @@ class FeedbackManager(private val context: Context) {
         private const val SAMPLE_RATE = 44100
     }
 
+    // MARK: - MeshMonstis (Radar-PKE + Fang)
+
+    private var lastGhostBeep = 0L
+
+    /**
+     * Geister-Naehe-Ton (PKE-Meter): je naeher, desto schneller und hoeher.
+     * Ab 2 km stumm; Intervall 2 s -> 200 ms unter 200 m, Ton 220 -> 660 Hz.
+     * Pro Location-Tick aufrufen — drosselt sich selbst.
+     */
+    fun playGhostNear(distanceM: Double) {
+        if (!soundEnabled || distanceM > 2_000) return
+        val t = (distanceM.coerceAtLeast(200.0) - 200.0) / 1_800.0   // 0..1
+        val interval = (200 + t * 1_800).toLong()
+        val now = System.currentTimeMillis()
+        if (now - lastGhostBeep < interval) return
+        lastGhostBeep = now
+        val freq = (660 - t * 440).toFloat()
+        scope.launch { playTone(freq, freq, 80) }
+    }
+
+    /** Fang! Aufsteigende Fanfare + kraeftige Vibration. */
+    fun playCatch() {
+        if (soundEnabled) {
+            scope.launch {
+                playTone(440f, 660f, 120)
+                playTone(660f, 880f, 120)
+                playTone(880f, 1320f, 200)
+            }
+        }
+        vibrate(400)
+    }
+
     /**
      * Play RX feedback - short high beep (880Hz, 100ms)
      */

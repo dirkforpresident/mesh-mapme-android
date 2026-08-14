@@ -23,6 +23,9 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.isGranted
+import sh.mapme.mapper.data.Ghost
+import sh.mapme.mapper.data.GhostKind
+import sh.mapme.mapper.data.GhostMath
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
@@ -54,6 +57,7 @@ fun MapScreen(
     val privacyMode by viewModel.privacyMode.collectAsState()
     val coverageChannelReady by viewModel.coverageChannelReady.collectAsState()
     val currentH3 by viewModel.currentH3.collectAsState()
+    val ghosts by viewModel.ghosts.collectAsState()
 
     var showStats by remember { mutableStateOf(true) }
     val useDarkMap by viewModel.mapUseDarkMode.collectAsState()
@@ -157,6 +161,26 @@ fun MapScreen(
     // Default to last known position (persisted) instead of hardcoded Hamburg
     val locationService = MapmeApp.instance.locationService
     val defaultLocation = GeoPoint(locationService.lastLat, locationService.lastLon)
+
+    // MeshMonstis: Geister holen (2-min-Cache im Service), solange Tab offen
+    LaunchedEffect(Unit) {
+        while (true) {
+            viewModel.refreshGhosts()
+            kotlinx.coroutines.delay(125_000)
+        }
+    }
+
+    // Radar-PKE: Naehe-Ton zum naechsten fangbaren Geist (nur beim Tracken,
+    // nie im Anonym-Modus — anonym faengt serverseitig nichts)
+    LaunchedEffect(currentLocation, ghosts, isTracking, privacyMode) {
+        val loc = currentLocation ?: return@LaunchedEffect
+        if (!isTracking || privacyMode == "anonym" || ghosts.isEmpty()) return@LaunchedEffect
+        val nearest = ghosts.asSequence()
+            .filter { !it.kind.rxOnly }
+            .map { GhostMath.haversineMeters(loc.latitude, loc.longitude, it.lat, it.lon) }
+            .minOrNull() ?: return@LaunchedEffect
+        MapmeApp.instance.feedbackManager.playGhostNear(nearest)
+    }
 
     // Session hex data: H3 -> (repeaterName, bestRSSI)
     val sessionHexData = remember { mutableStateMapOf<String, Pair<String, Int>>() }
@@ -270,7 +294,7 @@ fun MapScreen(
     }
 
     // Update hex overlays
-    LaunchedEffect(serverHexes, visitedHexes, sessionHexData.keys.toList()) {
+    LaunchedEffect(serverHexes, visitedHexes, sessionHexData.keys.toList(), ghosts, privacyMode) {
         try {
             // Remove old polygon and marker overlays (keep location overlay)
             val locationOverlay = mapView.overlays.firstOrNull { it is MyLocationNewOverlay }
@@ -368,6 +392,54 @@ fun MapScreen(
                 } catch (e: Exception) { /* skip */ }
             }
 
+            // MeshMonstis-Marker: Kreis in Typ-Farbe + Emoji. Nur bis 50 km um
+            // die eigene Position (osmdroid mag keine 1000 Marker), anonym aus.
+            if (privacyMode != "anonym") {
+                val loc = currentLocation
+                ghosts.asSequence()
+                    .filter { g ->
+                        loc == null || GhostMath.haversineMeters(
+                            loc.latitude, loc.longitude, g.lat, g.lon) < 50_000
+                    }
+                    .take(200)
+                    .forEach { g ->
+                        try {
+                            val size = 56
+                            val bmp = android.graphics.Bitmap.createBitmap(
+                                size, size, android.graphics.Bitmap.Config.ARGB_8888)
+                            val canvas = android.graphics.Canvas(bmp)
+                            val fill = android.graphics.Paint().apply {
+                                isAntiAlias = true
+                                color = ghostColor(g.kind)
+                                alpha = 230
+                            }
+                            canvas.drawCircle(size / 2f, size / 2f, size / 2f - 2, fill)
+                            val ring = android.graphics.Paint().apply {
+                                isAntiAlias = true
+                                style = android.graphics.Paint.Style.STROKE
+                                strokeWidth = 3f
+                                color = AndroidColor.WHITE
+                            }
+                            canvas.drawCircle(size / 2f, size / 2f, size / 2f - 2, ring)
+                            val txt = android.graphics.Paint().apply {
+                                isAntiAlias = true
+                                textSize = 30f
+                                textAlign = android.graphics.Paint.Align.CENTER
+                            }
+                            canvas.drawText(g.kind.emoji, size / 2f, size / 2f + 11f, txt)
+                            val marker = Marker(mapView).apply {
+                                position = GeoPoint(g.lat, g.lon)
+                                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                                icon = android.graphics.drawable.BitmapDrawable(
+                                    mapView.context.resources, bmp)
+                                title = "${g.kind.labelDe}${g.name?.let { " „$it”" } ?: ""} — ${g.points} P" +
+                                    if (g.kind.rxOnly) " (braucht Empfang)" else ""
+                            }
+                            mapView.overlays.add(marker)
+                        } catch (e: Exception) { /* skip ghost */ }
+                    }
+            }
+
             // Move location overlay to top so it's always visible above hexagons
             locationOverlay?.let {
                 mapView.overlays.remove(it)
@@ -385,6 +457,16 @@ fun MapScreen(
                 mapView
             },
             modifier = Modifier.fillMaxSize()
+        )
+
+        // MeshMonstis-Radar (unten mittig): naechster Geist je Typ
+        GhostRadarHud(
+            ghosts = ghosts,
+            location = currentLocation,
+            anonym = privacyMode == "anonym",
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 12.dp)
         )
 
         // Stats overlay (top-left)
@@ -740,3 +822,92 @@ fun rssiColor(rssi: Int): Color {
         else -> Color(0xFF6B7280)        // Marginal — gray
     }
 }
+
+
+// MARK: - MeshMonstis
+
+/** Website-Palette (dataviz-validiert) als Android-Farbwerte. */
+fun ghostColor(kind: GhostKind): Int = when (kind) {
+    GhostKind.IRRLICHT -> AndroidColor.rgb(0x3B, 0x82, 0xF6)
+    GhostKind.PENDLERGEIST -> AndroidColor.rgb(0xF4, 0x3F, 0x5E)
+    GhostKind.BRUECKENGEIST -> AndroidColor.rgb(0x08, 0x91, 0xB2)
+    GhostKind.WIEDERGAENGER -> AndroidColor.rgb(0x65, 0xA3, 0x0D)
+    GhostKind.BERGGEIST -> AndroidColor.rgb(0xA8, 0x55, 0xF7)
+}
+
+/**
+ * Radar-HUD: naechster Geist je Typ mit Distanz + Himmelsrichtung.
+ * rx-only-Typen zeigen "braucht Empfang" statt Fang-Illusion.
+ */
+@Composable
+fun GhostRadarHud(
+    ghosts: List<Ghost>,
+    location: android.location.Location?,
+    anonym: Boolean,
+    modifier: Modifier = Modifier
+) {
+    if (ghosts.isEmpty()) return
+    var expanded by remember { mutableStateOf(true) }
+
+    Card(
+        modifier = modifier.clickable { expanded = !expanded },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
+            if (anonym) {
+                Text("👻 Anonym — keine Jagd", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                return@Card
+            }
+            if (location == null) {
+                Text("👻 Radar wartet auf GPS…", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                return@Card
+            }
+            val nearest = remember(ghosts, location.latitude, location.longitude) {
+                GhostMath.nearestByKind(location.latitude, location.longitude, ghosts)
+            }
+            if (!expanded) {
+                val best = nearest.values.filter { !it.ghost.kind.rxOnly }.minByOrNull { it.distanceM }
+                Text(
+                    text = best?.let {
+                        "${it.ghost.kind.emoji} ${fmtDistance(it.distanceM)} ${GhostMath.compass(it.bearing)}"
+                    } ?: "👻 Radar",
+                    style = MaterialTheme.typography.labelMedium
+                )
+                return@Card
+            }
+            GhostKind.entries.forEach { kind ->
+                val n = nearest[kind]
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(vertical = 1.dp)
+                ) {
+                    Text(kind.emoji, style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.width(6.dp))
+                    Text(kind.labelDe, style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.width(92.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        text = when {
+                            n == null -> "—"
+                            kind.rxOnly && n.distanceM < 1_500 -> "braucht Empfang!"
+                            n.distanceM > 15_000 -> "—  (keiner < 15 km)"
+                            else -> "${fmtDistance(n.distanceM)}  ${GhostMath.compass(n.bearing)}"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (n != null && n.distanceM < 2_000 && !kind.rxOnly)
+                            FontWeight.Bold else FontWeight.Normal,
+                        color = if (n != null && n.distanceM < 2_000 && !kind.rxOnly)
+                            Color(0xFF22C55E) else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun fmtDistance(m: Double): String =
+    if (m < 1_000) "${m.toInt()} m" else "%.1f km".format(m / 1_000.0)
