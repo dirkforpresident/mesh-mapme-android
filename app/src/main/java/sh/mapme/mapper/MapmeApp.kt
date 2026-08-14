@@ -31,6 +31,9 @@ class MapmeApp : Application() {
     lateinit var albumStore: AlbumStore
         private set
 
+    lateinit var tradeManager: TradeManager
+        private set
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -50,6 +53,7 @@ class MapmeApp : Application() {
             locationService, feedbackManager)
         albumStore = AlbumStore(this)
         ghostHunt.onConfirmedCatch = { ghost, points -> albumStore.addCaught(ghost, points) }
+        tradeManager = TradeManager(bleManager, albumStore)
 
         // Wire up dependencies
         sampleRepository.hexService = hexService

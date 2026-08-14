@@ -150,6 +150,9 @@ fun MainApp() {
             composable("jagd") { sh.mapme.mapper.ui.game.AlbumScreen(viewModel) }
         }
 
+        // Tausch-UI (Sheet + eingehende Angebote) global
+        sh.mapme.mapper.ui.game.TradeSheetHost(viewModel)
+
         // Fang-Toast schwebt ueber allen Tabs
         sh.mapme.mapper.ui.game.CatchToastHost(
             hunt = viewModel.ghostHunt,

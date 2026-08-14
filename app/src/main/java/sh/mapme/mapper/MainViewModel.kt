@@ -21,6 +21,7 @@ class MainViewModel : ViewModel() {
     val hexService = app.hexService
     val ghostHunt = app.ghostHunt
     val albumStore = app.albumStore
+    val tradeManager = app.tradeManager
     val albumCards = albumStore.cards
 
     // Karte, fuer die gerade das TradeSheet offen ist (Task 9 rendert es)
