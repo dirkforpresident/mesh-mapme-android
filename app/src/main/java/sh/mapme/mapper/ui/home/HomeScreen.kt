@@ -461,6 +461,10 @@ fun HomeScreen(
                             description = "Einfach mappen \u2014 wer zuerst ein Sample in der Zelle eines Geists erzeugt, hat ihn. Kein Account n\u00f6tig."
                         )
                         HowItWorksItem(
+                            title = "Wie nah ran?",
+                            description = "Geister: in die Sechseck-Wabe des Geists (gut 2 km breit) \u2014 Faustregel ~1 km ranfahren, Sample f\u00e4ngt automatisch. Gipfelbuch: nur direkt am Gipfel (~250-m-Zone)."
+                        )
+                        HowItWorksItem(
                             title = "\u26f0\ufe0f Berggeist (+50)",
                             description = "Sitzt am besten Funk-Standort der Gegend \u2014 prominente H\u00fcgel, Aussichts-/Wasserturm, Sendeturm-Gel\u00e4nde. Fang ihn und du stehst am idealen Repeater-Platz."
                         )
