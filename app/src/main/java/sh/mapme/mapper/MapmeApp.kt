@@ -28,6 +28,9 @@ class MapmeApp : Application() {
     lateinit var ghostHunt: GhostHuntManager
         private set
 
+    lateinit var albumStore: AlbumStore
+        private set
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -45,6 +48,8 @@ class MapmeApp : Application() {
         // MeshMonstis: Fang-Erkennung (beobachtet Location + Samples + Geister)
         ghostHunt = GhostHuntManager(hexService, sampleRepository, bleManager,
             locationService, feedbackManager)
+        albumStore = AlbumStore(this)
+        ghostHunt.onConfirmedCatch = { ghost, points -> albumStore.addCaught(ghost, points) }
 
         // Wire up dependencies
         sampleRepository.hexService = hexService

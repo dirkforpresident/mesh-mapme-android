@@ -114,6 +114,17 @@ fun MainApp() {
                         }
                     }
                 )
+                NavigationBarItem(
+                    icon = { Icon(painterResource(R.drawable.ic_ghost), contentDescription = "Jagd", modifier = Modifier.size(22.dp)) },
+                    label = { Text("Jagd", fontSize = 12.sp) },
+                    selected = selectedTab == 3,
+                    onClick = {
+                        selectedTab = 3
+                        navController.navigate("jagd") {
+                            popUpTo("home")
+                        }
+                    }
+                )
             }
         }
     ) { innerPadding ->
@@ -136,6 +147,7 @@ fun MainApp() {
             }
             composable("device") { DeviceScreen(viewModel) }
             composable("map") { MapScreen(viewModel) }
+            composable("jagd") { sh.mapme.mapper.ui.game.AlbumScreen(viewModel) }
         }
 
         // Fang-Toast schwebt ueber allen Tabs

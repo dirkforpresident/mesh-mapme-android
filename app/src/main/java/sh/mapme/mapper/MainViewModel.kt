@@ -20,6 +20,13 @@ class MainViewModel : ViewModel() {
     val sampleRepository = app.sampleRepository
     val hexService = app.hexService
     val ghostHunt = app.ghostHunt
+    val albumStore = app.albumStore
+    val albumCards = albumStore.cards
+
+    // Karte, fuer die gerade das TradeSheet offen ist (Task 9 rendert es)
+    val tradeSheetCard = kotlinx.coroutines.flow.MutableStateFlow<sh.mapme.mapper.data.AlbumCard?>(null)
+    fun openTradeSheet(card: sh.mapme.mapper.data.AlbumCard) { tradeSheetCard.value = card }
+    fun closeTradeSheet() { tradeSheetCard.value = null }
 
     // Convenience flows
     val isConnected = bleManager.isConnected
@@ -91,6 +98,28 @@ class MainViewModel : ViewModel() {
                     val pubkeyHex = pk.joinToString("") { "%02x".format(it) }
                     hexService.fetchOwnRank(pubkeyHex)
                 }
+            }
+        }
+
+        // Album-Seed: eigene Faenge aus dem globalen Feed nachtragen (nur 30
+        // Eintraege — unvollstaendig, aber besser als leer nach Neuinstallation)
+        viewModelScope.launch {
+            selfInfo.collect { info ->
+                val pk = info?.publicKey?.joinToString("") { "%02x".format(it) } ?: return@collect
+                hexService.fetchGameFeed()
+                kotlinx.coroutines.delay(3_000)
+                hexService.gameFeed.value
+                    .filter { it.type == "ghost" && it.pubkey == pk && it.ghostId != null }
+                    .forEach { e ->
+                        val kind = sh.mapme.mapper.data.GhostKind.fromWire(e.what) ?: return@forEach
+                        if (!albumStore.has(e.ghostId!!)) {
+                            albumStore.addCaught(
+                                sh.mapme.mapper.data.Ghost(
+                                    e.ghostId, kind, e.lat ?: 0.0, e.lon ?: 0.0,
+                                    e.points, null, ""),
+                                e.points)
+                        }
+                    }
             }
         }
     }
