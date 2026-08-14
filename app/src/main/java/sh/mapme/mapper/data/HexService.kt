@@ -338,7 +338,10 @@ class HexService {
                             lon = o.getDouble("lon"),
                             points = o.optInt("points", 0),
                             name = details?.optString("name")?.takeIf { it.isNotEmpty() && it != "null" },
-                            h7 = h7
+                            h7 = h7,
+                            site = details?.optString("site")?.takeIf { it.isNotEmpty() },
+                            hinweis = details?.optString("hinweis")?.takeIf { it.isNotEmpty() },
+                            hinweisRx = details?.optString("hinweis_rx")?.takeIf { it.isNotEmpty() }
                         ))
                     }
                     _ghosts.value = result

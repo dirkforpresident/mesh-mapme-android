@@ -5,12 +5,16 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.*
 import androidx.compose.ui.unit.dp
@@ -21,6 +25,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import sh.mapme.mapper.ui.theme.MapmeMapperTheme
 import sh.mapme.mapper.ui.home.HomeScreen
@@ -55,117 +60,121 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainApp() {
+    // GameShell: die App IST das Spiel (iOS-Prinzip) — keine Tab-Bar mehr.
+    // Die Karte ist die Bühne, alles andere liegt hinter Chips/Buttons:
+    // Spieler-Chip → Hub, Mesh-LED/Verbinden → Companion, Album, Monsti-Radar.
     val navController = rememberNavController()
-    var selectedTab by remember { mutableIntStateOf(0) }
-
-    // Shared ViewModel
     val viewModel: MainViewModel = viewModel()
 
-    // Observe connection state
     val isConnected by viewModel.isConnected.collectAsState()
+    val selfInfo by viewModel.selfInfo.collectAsState()
+    val albumCards by viewModel.albumCards.collectAsState()
+    val ghosts by viewModel.ghosts.collectAsState()
+    val currentLocation by viewModel.currentLocation.collectAsState()
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        bottomBar = {
-            NavigationBar(
-                modifier = Modifier
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-            ) {
-                NavigationBarItem(
-                    icon = { Icon(painterResource(R.drawable.ic_home), contentDescription = "Home", modifier = Modifier.size(22.dp)) },
-                    label = { Text("Home", fontSize = 12.sp) },
-                    selected = selectedTab == 0,
-                    onClick = {
-                        selectedTab = 0
-                        navController.navigate("home") {
-                            popUpTo("home") { inclusive = true }
-                        }
-                    }
-                )
-                NavigationBarItem(
-                    icon = {
-                        BadgedBox(
-                            badge = {
-                                if (isConnected) {
-                                    Badge(containerColor = MaterialTheme.colorScheme.primary) { }
-                                }
-                            }
-                        ) {
-                            Icon(painterResource(R.drawable.ic_device), contentDescription = "Device", modifier = Modifier.size(22.dp))
-                        }
-                    },
-                    label = { Text("Device", fontSize = 12.sp) },
-                    selected = selectedTab == 1,
-                    onClick = {
-                        selectedTab = 1
-                        navController.navigate("device") {
-                            popUpTo("home")
-                        }
-                    }
-                )
-                NavigationBarItem(
-                    icon = { Icon(painterResource(R.drawable.ic_map), contentDescription = "Map", modifier = Modifier.size(22.dp)) },
-                    label = { Text("Map", fontSize = 12.sp) },
-                    selected = selectedTab == 2,
-                    onClick = {
-                        selectedTab = 2
-                        navController.navigate("map") {
-                            popUpTo("home")
-                        }
-                    }
-                )
-                NavigationBarItem(
-                    icon = { Icon(painterResource(R.drawable.ic_ghost), contentDescription = "Jagd", modifier = Modifier.size(22.dp)) },
-                    label = { Text("Jagd", fontSize = 12.sp) },
-                    selected = selectedTab == 3,
-                    onClick = {
-                        selectedTab = 3
-                        navController.navigate("jagd") {
-                            popUpTo("home")
-                        }
-                    }
-                )
-            }
-        }
-    ) { innerPadding ->
-        androidx.compose.foundation.layout.Box(Modifier.padding(innerPadding).fillMaxSize()) {
+    var showRadar by remember { mutableStateOf(false) }
+    val backStack by navController.currentBackStackEntryAsState()
+    val onMap = backStack?.destination?.route == "map" || backStack == null
+
+    // Nächster fangbarer Geist (rx-only zählt nicht) für den Monsti-Button
+    val nearestCatchable = remember(ghosts, currentLocation) {
+        val loc = currentLocation ?: return@remember null
+        sh.mapme.mapper.data.GhostMath
+            .nearestByKind(loc.latitude, loc.longitude, ghosts.filter { !it.kind.rxOnly })
+            .values.minByOrNull { it.distanceM }
+    }
+
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
         NavHost(
             navController = navController,
-            startDestination = "home",
+            startDestination = "map",
             modifier = Modifier.fillMaxSize()
         ) {
+            composable("map") { MapScreen(viewModel) }
             composable("home") {
                 HomeScreen(
                     viewModel = viewModel,
-                    onNavigateToDevice = {
-                        selectedTab = 1
-                        navController.navigate("device") {
-                            popUpTo("home")
-                        }
-                    },
-                    onNavigateToMap = {
-                        selectedTab = 2
-                        navController.navigate("map") { popUpTo("home") }
-                    },
-                    onNavigateToAlbum = {
-                        selectedTab = 3
-                        navController.navigate("jagd") { popUpTo("home") }
-                    }
+                    onNavigateToDevice = { navController.navigate("device") { popUpTo("map") } },
+                    onNavigateToMap = { navController.popBackStack("map", false) },
+                    onNavigateToAlbum = { navController.navigate("jagd") { popUpTo("map") } }
                 )
             }
             composable("device") { DeviceScreen(viewModel) }
-            composable("map") { MapScreen(viewModel) }
             composable("jagd") { sh.mapme.mapper.ui.game.AlbumScreen(viewModel) }
+        }
+
+        if (onMap) {
+            // Oben: Spieler links, Mesh-LED rechts
+            Row(
+                Modifier
+                    .align(androidx.compose.ui.Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(horizontal = 14.dp, vertical = 6.dp)
+            ) {
+                sh.mapme.mapper.ui.game.PlayerChip(
+                    name = selfInfo?.nodeName?.takeIf { it.isNotBlank() } ?: "Mapper",
+                    cards = albumCards.size,
+                    points = albumCards.sumOf { it.points },
+                    onClick = { navController.navigate("home") { popUpTo("map") } }
+                )
+                Spacer(Modifier.weight(1f))
+                sh.mapme.mapper.ui.game.LinkChip(
+                    connected = isConnected,
+                    onClick = { navController.navigate("device") { popUpTo("map") } }
+                )
+            }
+
+            // Unten: Album · Monsti-Button · Verbinden
+            Row(
+                Modifier
+                    .align(androidx.compose.ui.Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(horizontal = 28.dp, vertical = 10.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.Bottom
+            ) {
+                sh.mapme.mapper.ui.game.SideButton("📖", "Album", badge = albumCards.size) {
+                    navController.navigate("jagd") { popUpTo("map") }
+                }
+                Spacer(Modifier.weight(1f))
+                sh.mapme.mapper.ui.game.MonstiButton(nearestCatchable) { showRadar = true }
+                Spacer(Modifier.weight(1f))
+                sh.mapme.mapper.ui.game.SideButton(
+                    if (isConnected) "📡" else "🔌",
+                    if (isConnected) "Mesh" else "Verbinden"
+                ) { navController.navigate("device") { popUpTo("map") } }
+            }
+        } else {
+            // Nicht auf der Karte: schlanker Zurück-Chip oben links
+            Row(
+                Modifier
+                    .align(androidx.compose.ui.Alignment.TopStart)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(10.dp)
+            ) {
+                FilledTonalButton(onClick = { navController.popBackStack("map", false) }) {
+                    Text("← Karte")
+                }
+            }
+        }
+
+        if (showRadar) {
+            sh.mapme.mapper.ui.game.RadarSheet(
+                ghosts = ghosts,
+                myLat = currentLocation?.latitude,
+                myLon = currentLocation?.longitude,
+                onDismiss = { showRadar = false }
+            )
         }
 
         // Tausch-UI (Sheet + eingehende Angebote) global
         sh.mapme.mapper.ui.game.TradeSheetHost(viewModel)
 
-        // Fang-Toast schwebt ueber allen Tabs
+        // Fang-Toast schwebt ueber allem
         sh.mapme.mapper.ui.game.CatchToastHost(
             hunt = viewModel.ghostHunt,
             modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter)
         )
-        }
     }
 }

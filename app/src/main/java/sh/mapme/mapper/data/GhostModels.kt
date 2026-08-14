@@ -18,6 +18,19 @@ enum class GhostKind(val wire: String, val emoji: String, val labelDe: String) {
     /** Nur mit rx-Sample fangbar ("austreiben durch Netzausbau"). */
     val rxOnly: Boolean get() = this == PENDLERGEIST || this == BRUECKENGEIST
 
+    /** Kurzbeschreibung fürs Info-Card — gleiche Sprache wie Webkarte/iOS. */
+    val infoDe: String get() = when (this) {
+        IRRLICHT -> "Hier hat noch NIE jemand gemappt — erkunde es!"
+        WIEDERGAENGER -> "Alte Coverage — seit über 90 Tagen ungeprüft."
+        BERGGEIST -> "Bester Funk-Standort der Umgebung — prominenter Hügel, Aussichts- oder Wasserturm, Sendeturm-Gelände oder der Sattel zwischen zwei Netz-Inseln. Wer ihn fängt, steht am idealen Platz für einen (Solar-)Repeater."
+        PENDLERGEIST -> "Viel befahren, nie Empfang — hier tut die Lücke weh."
+        BRUECKENGEIST -> "Würde zwei Coverage-Inseln verbinden."
+    }
+
+    val catchHintDe: String get() =
+        if (rxOnly) "⚡ Austreiben: Repeater in der Nähe aufstellen — der erste Empfang hier besiegt ihn."
+        else "Fang ihn: Erzeuge hier ein Sample (hinfahren & mappen)."
+
     companion object {
         /** Unbekannte Typen (Server kann neue erfinden) → null, nie crashen. */
         fun fromWire(s: String?): GhostKind? = entries.find { it.wire == s }
@@ -31,13 +44,26 @@ data class Ghost(
     val lon: Double,
     val points: Int,
     val name: String?,
-    val h7: String
+    val h7: String,
+    // Berggeist-Standort-Details vom Server (Defaults: alte Aufrufer/Seeds ok)
+    val site: String? = null,       // gipfel|aussichtsturm|wasserturm|sendemast|bruecke
+    val hinweis: String? = null,    // Nach-dem-Fang-Satz (ohne rx)
+    val hinweisRx: String? = null   // Nach-dem-Fang-Satz (mit rx)
 ) {
     /** Sprite-Variante 0..8 — deterministisch wie auf der Website (id % 9). */
     val spriteIndex: Int get() = (id % 9).toInt()
 
     fun spriteUrl(base: String = "https://mapme.sh"): String =
         "$base/ghosts/${kind.wire}/$spriteIndex.png"
+
+    val siteLabelDe: String? get() = when (site) {
+        "gipfel" -> "Gipfel"
+        "aussichtsturm" -> "Aussichtsturm"
+        "wasserturm" -> "Wasserturm"
+        "sendemast" -> "Sendeturm-Gelände"
+        "bruecke" -> "Brücken-Sattel"
+        else -> null
+    }
 }
 
 /** Ein Eintrag aus GET /api/game/feed (Fang oder Gipfelbesteigung). */

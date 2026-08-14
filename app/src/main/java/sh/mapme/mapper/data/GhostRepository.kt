@@ -96,7 +96,9 @@ class GhostHuntManager(
     private val h3: H3Cells = NativeH3Cells
 ) {
     enum class CatchStatus { PENDING, CONFIRMED, MISSED }
-    data class CatchEvent(val ghost: Ghost, val status: CatchStatus, val confirmedPoints: Int? = null)
+    data class CatchEvent(val ghost: Ghost, val status: CatchStatus,
+                          val confirmedPoints: Int? = null,
+                          val rx: Boolean = false)   // Fang mit Empfang → hinweis_rx
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
@@ -149,11 +151,11 @@ class GhostHuntManager(
         if (ghost.kind.rxOnly && !rxHere) return
 
         toastedIds.add(ghost.id)
-        _catchEvent.value = CatchEvent(ghost, CatchStatus.PENDING)
-        scope.launch { confirmViaFeed(ghost) }
+        _catchEvent.value = CatchEvent(ghost, CatchStatus.PENDING, rx = rxHere)
+        scope.launch { confirmViaFeed(ghost, rxHere) }
     }
 
-    private suspend fun confirmViaFeed(ghost: Ghost) {
+    private suspend fun confirmViaFeed(ghost: Ghost, rx: Boolean) {
         val myPubkey = bleManager.selfInfo.value?.publicKey?.toHexString() ?: return
         repeat(7) {
             delay(30_000)
@@ -164,12 +166,12 @@ class GhostHuntManager(
             }
             if (hit != null) {
                 feedbackManager.playCatch()
-                _catchEvent.value = CatchEvent(ghost, CatchStatus.CONFIRMED, hit.points)
+                _catchEvent.value = CatchEvent(ghost, CatchStatus.CONFIRMED, hit.points, rx = rx)
                 onConfirmedCatch?.invoke(ghost, hit.points)
                 return
             }
         }
-        _catchEvent.value = CatchEvent(ghost, CatchStatus.MISSED)
+        _catchEvent.value = CatchEvent(ghost, CatchStatus.MISSED, rx = rx)
     }
 
     fun dismissToast() { _catchEvent.value = null }

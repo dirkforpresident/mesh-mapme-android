@@ -70,8 +70,11 @@ fun CatchToastHost(hunt: GhostHuntManager, modifier: Modifier = Modifier) {
                             color = Color(0xFF86EFAC),
                             style = MaterialTheme.typography.titleSmall)
                         Text(
+                            // Standort-Geister: fertiger Ein-Satz-Hinweis vom
+                            // Server (hinweis/hinweis_rx je nach Fang-Modus)
                             if (e.ghost.kind == GhostKind.BERGGEIST)
-                                "Du stehst auf einer der höchsten Erhebungen der Gegend — idealer Standort für einen Solar-Repeater! 📡"
+                                (if (e.rx) e.ghost.hinweisRx else e.ghost.hinweis)
+                                    ?: "Du stehst am besten Funk-Standort der Gegend — schau dich um: idealer Platz für einen Solar-Repeater! 📡"
                             else "ins Album gelegt",
                             style = MaterialTheme.typography.labelSmall,
                             color = Color(0xFF86EFAC).copy(alpha = 0.8f))

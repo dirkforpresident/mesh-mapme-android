@@ -60,6 +60,9 @@ fun MapScreen(
     val ghosts by viewModel.ghosts.collectAsState()
 
     var showStats by remember { mutableStateOf(true) }
+    // Tap auf Monsti → Info-Card (wie Webkarten-Popup / iOS-Sheet)
+    val selectedGhost = remember { mutableStateOf<Ghost?>(null) }
+    val spriteVersion by sh.mapme.mapper.ui.game.MonstiSprites.version.collectAsState()
     val useDarkMap by viewModel.mapUseDarkMode.collectAsState()
     var showActivityFeed by viewModel.mapShowActivityFeed
     val followLocation by viewModel.mapFollowLocation.collectAsState()
@@ -293,8 +296,8 @@ fun MapScreen(
         }
     }
 
-    // Update hex overlays
-    LaunchedEffect(serverHexes, visitedHexes, sessionHexData.keys.toList(), ghosts, privacyMode) {
+    // Update hex overlays (spriteVersion: Monsti-PNGs laden async nach)
+    LaunchedEffect(serverHexes, visitedHexes, sessionHexData.keys.toList(), ghosts, privacyMode, spriteVersion) {
         try {
             // Remove old polygon and marker overlays (keep location overlay)
             val locationOverlay = mapView.overlays.firstOrNull { it is MyLocationNewOverlay }
@@ -404,36 +407,48 @@ fun MapScreen(
                     .take(200)
                     .forEach { g ->
                         try {
-                            val size = 56
-                            val bmp = android.graphics.Bitmap.createBitmap(
-                                size, size, android.graphics.Bitmap.Config.ARGB_8888)
-                            val canvas = android.graphics.Canvas(bmp)
-                            val fill = android.graphics.Paint().apply {
-                                isAntiAlias = true
-                                color = ghostColor(g.kind)
-                                alpha = 230
+                            // Echte Grok-Monstis wie Website/iOS; bis das PNG
+                            // geladen ist, bleibt der Emoji-Kreis als Fallback
+                            val sprite = sh.mapme.mapper.ui.game.MonstiSprites.get(g)
+                            val bmp = if (sprite != null) {
+                                android.graphics.Bitmap.createScaledBitmap(sprite, 96, 96, true)
+                            } else {
+                                val size = 56
+                                val b = android.graphics.Bitmap.createBitmap(
+                                    size, size, android.graphics.Bitmap.Config.ARGB_8888)
+                                val canvas = android.graphics.Canvas(b)
+                                val fill = android.graphics.Paint().apply {
+                                    isAntiAlias = true
+                                    color = ghostColor(g.kind)
+                                    alpha = 230
+                                }
+                                canvas.drawCircle(size / 2f, size / 2f, size / 2f - 2, fill)
+                                val ring = android.graphics.Paint().apply {
+                                    isAntiAlias = true
+                                    style = android.graphics.Paint.Style.STROKE
+                                    strokeWidth = 3f
+                                    color = AndroidColor.WHITE
+                                }
+                                canvas.drawCircle(size / 2f, size / 2f, size / 2f - 2, ring)
+                                val txt = android.graphics.Paint().apply {
+                                    isAntiAlias = true
+                                    textSize = 30f
+                                    textAlign = android.graphics.Paint.Align.CENTER
+                                }
+                                canvas.drawText(g.kind.emoji, size / 2f, size / 2f + 11f, txt)
+                                b
                             }
-                            canvas.drawCircle(size / 2f, size / 2f, size / 2f - 2, fill)
-                            val ring = android.graphics.Paint().apply {
-                                isAntiAlias = true
-                                style = android.graphics.Paint.Style.STROKE
-                                strokeWidth = 3f
-                                color = AndroidColor.WHITE
-                            }
-                            canvas.drawCircle(size / 2f, size / 2f, size / 2f - 2, ring)
-                            val txt = android.graphics.Paint().apply {
-                                isAntiAlias = true
-                                textSize = 30f
-                                textAlign = android.graphics.Paint.Align.CENTER
-                            }
-                            canvas.drawText(g.kind.emoji, size / 2f, size / 2f + 11f, txt)
                             val marker = Marker(mapView).apply {
                                 position = GeoPoint(g.lat, g.lon)
                                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                                 icon = android.graphics.drawable.BitmapDrawable(
                                     mapView.context.resources, bmp)
-                                title = "${g.kind.labelDe}${g.name?.let { " „$it”" } ?: ""} — ${g.points} P" +
-                                    if (g.kind.rxOnly) " (braucht Empfang)" else ""
+                                // KEIN title mehr: statt osmdroid-Bubble öffnet
+                                // der Tap unsere GhostInfoCard (wie Web/iOS)
+                                setOnMarkerClickListener { _, _ ->
+                                    selectedGhost.value = g
+                                    true
+                                }
                             }
                             mapView.overlays.add(marker)
                         } catch (e: Exception) { /* skip ghost */ }
@@ -459,21 +474,28 @@ fun MapScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // MeshMonstis-Radar (unten mittig): naechster Geist je Typ
-        GhostRadarHud(
-            ghosts = ghosts,
-            location = currentLocation,
-            anonym = privacyMode == "anonym",
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 12.dp)
-        )
+        // (Radar lebt jetzt in der GameShell: Monsti-Button + RadarSheet)
+
+        // Monsti-Info-Card (Tap auf Geist) — wie Webkarten-Popup / iOS
+        selectedGhost.value?.let { g ->
+            sh.mapme.mapper.ui.game.GhostInfoCard(
+                ghost = g,
+                distanceM = currentLocation?.let {
+                    GhostMath.haversineMeters(it.latitude, it.longitude, g.lat, g.lon)
+                },
+                onClose = { selectedGhost.value = null },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 104.dp)   // ueber den GameShell-Buttons
+            )
+        }
 
         // Stats overlay (top-left)
         if (showStats) {
             Card(
                 modifier = Modifier
-                    .padding(12.dp)
+                    .padding(start = 12.dp, top = 104.dp)   // unter dem Spieler-Chip
                     .align(Alignment.TopStart)
                     .clickable { showStats = false },
                 colors = CardDefaults.cardColors(
@@ -514,7 +536,7 @@ fun MapScreen(
             // Collapsed stats
             Card(
                 modifier = Modifier
-                    .padding(12.dp)
+                    .padding(start = 12.dp, top = 104.dp)   // unter dem Spieler-Chip
                     .align(Alignment.TopStart)
                     .clickable { showStats = true },
                 colors = CardDefaults.cardColors(
@@ -540,7 +562,7 @@ fun MapScreen(
         if (recentRxPackets.isNotEmpty()) {
             Card(
                 modifier = Modifier
-                    .padding(12.dp)
+                    .padding(start = 12.dp, bottom = 96.dp)   // ueber dem Album-Button
                     .align(Alignment.BottomStart)
                     .clickable { showActivityFeed = !showActivityFeed },
                 colors = CardDefaults.cardColors(
@@ -597,7 +619,7 @@ fun MapScreen(
         // Map controls (top-right): location + dark/light toggle
         Row(
             modifier = Modifier
-                .padding(12.dp)
+                .padding(end = 12.dp, top = 64.dp)   // unter der Mesh-LED
                 .align(Alignment.TopEnd),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -694,7 +716,7 @@ fun MapScreen(
 
             Column(
                 modifier = Modifier
-                    .padding(12.dp)
+                    .padding(end = 12.dp, bottom = 96.dp)   // ueber dem Verbinden-Button
                     .align(Alignment.BottomEnd),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -754,7 +776,7 @@ fun MapScreen(
         if (!isTracking) {
             Card(
                 modifier = Modifier
-                    .padding(top = 12.dp)
+                    .padding(top = 64.dp)   // unter den Shell-Chips
                     .align(Alignment.TopCenter),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.errorContainer
