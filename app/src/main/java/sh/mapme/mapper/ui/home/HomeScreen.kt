@@ -25,7 +25,9 @@ import sh.mapme.mapper.R
 @Composable
 fun HomeScreen(
     viewModel: MainViewModel = viewModel(),
-    onNavigateToDevice: () -> Unit = {}
+    onNavigateToDevice: () -> Unit = {},
+    onNavigateToMap: () -> Unit = {},
+    onNavigateToAlbum: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val isConnected by viewModel.isConnected.collectAsState()
@@ -40,9 +42,14 @@ fun HomeScreen(
     var showHowItWorks by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
 
+    val albumCards by viewModel.albumCards.collectAsState()
+    val ghosts by viewModel.ghosts.collectAsState()
+    val currentLocation by viewModel.currentLocation.collectAsState()
+
     LaunchedEffect(Unit) {
         viewModel.refreshLiveMappers()
         viewModel.refreshLeaderboard()
+        viewModel.refreshGhosts()
     }
 
     LazyColumn(
@@ -103,12 +110,30 @@ fun HomeScreen(
             }
 
             Text(
-                text = "MeshCore Coverage Mapper",
+                text = "Mappen. Jagen. Sammeln.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        // MeshMonstis Spiel-Hub — die App ist zuerst ein Spiel
+        item {
+            GameHubCard(
+                albumCount = albumCards.size,
+                albumPoints = albumCards.sumOf { it.points },
+                activeGhosts = ghosts.size,
+                nearest = currentLocation?.let { loc ->
+                    if (ghosts.isEmpty()) null
+                    else sh.mapme.mapper.data.GhostMath
+                        .nearestByKind(loc.latitude, loc.longitude, ghosts)
+                        .values.filter { !it.ghost.kind.rxOnly }
+                        .minByOrNull { it.distanceM }
+                },
+                onHunt = onNavigateToMap,
+                onAlbum = onNavigateToAlbum
+            )
         }
 
         // Connection Status Bar
@@ -625,5 +650,71 @@ fun LinkRow(label: String, url: String, context: android.content.Context) {
             text = ">",
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+
+/**
+ * GameHubCard — violettes Hero-Element im Website-Look (game.html):
+ * Album-Stand, aktive Geister, naechster Geist, Einstieg in die Jagd.
+ */
+@Composable
+fun GameHubCard(
+    albumCount: Int,
+    albumPoints: Int,
+    activeGhosts: Int,
+    nearest: sh.mapme.mapper.data.GhostMath.Nearest?,
+    onHunt: () -> Unit,
+    onAlbum: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1025))
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("👻", fontSize = 30.sp)
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text("MeshMonstis", fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp, color = Color(0xFFC4B5FD))
+                    Text("$activeGhosts Monstis spuken gerade da draußen",
+                        fontSize = 12.sp, color = Color(0xFF94A3B8))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                HubStat("$albumCount", if (albumCount == 1) "Karte" else "Karten")
+                HubStat("$albumPoints", "Punkte")
+                HubStat(
+                    nearest?.let {
+                        if (it.distanceM < 1000) "${it.distanceM.toInt()} m"
+                        else "%.1f km".format(it.distanceM / 1000)
+                    } ?: "—",
+                    "nächster Geist"
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = onHunt,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFA855F7), contentColor = Color(0xFF0A0A0A))
+                ) { Text("🎯 Jagd starten", fontWeight = FontWeight.Bold) }
+                OutlinedButton(onClick = onAlbum, modifier = Modifier.weight(1f)) {
+                    Text("📖 Album")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HubStat(value: String, label: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, fontWeight = FontWeight.Bold, fontSize = 20.sp,
+            color = Color(0xFFC4B5FD))
+        Text(label, fontSize = 11.sp, color = Color(0xFF94A3B8))
     }
 }

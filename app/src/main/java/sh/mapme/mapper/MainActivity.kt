@@ -142,6 +142,14 @@ fun MainApp() {
                         navController.navigate("device") {
                             popUpTo("home")
                         }
+                    },
+                    onNavigateToMap = {
+                        selectedTab = 2
+                        navController.navigate("map") { popUpTo("home") }
+                    },
+                    onNavigateToAlbum = {
+                        selectedTab = 3
+                        navController.navigate("jagd") { popUpTo("home") }
                     }
                 )
             }
