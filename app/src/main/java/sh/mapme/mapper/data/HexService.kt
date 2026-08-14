@@ -292,6 +292,102 @@ class HexService {
         }
     }
 
+    // MARK: - MeshMonstis (Radar/Album)
+
+    private val _ghosts = MutableStateFlow<List<Ghost>>(emptyList())
+    val ghosts: StateFlow<List<Ghost>> = _ghosts.asStateFlow()
+
+    private val _gameFeed = MutableStateFlow<List<GameFeedEntry>>(emptyList())
+    val gameFeed: StateFlow<List<GameFeedEntry>> = _gameFeed.asStateFlow()
+
+    private var lastGhostFetch: Long = 0
+
+    /**
+     * Aktive Geister — GET /api/ghosts liefert ALLE (~1000, kein Bbox-Filter),
+     * Client filtert. Server cacht 2 min, wir auch. JSONObject statt Gson:
+     * details.name fehlt bei den meisten Typen, unbekannte kinds werden
+     * uebersprungen statt zu crashen.
+     */
+    fun fetchGhosts(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastGhostFetch < 120_000) return
+        lastGhostFetch = now
+
+        scope.launch {
+            try {
+                val request = Request.Builder()
+                    .url("${Constants.API_BASE_URL}/api/ghosts")
+                    .get()
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use
+                    val body = response.body?.string() ?: "{}"
+                    val arr = org.json.JSONObject(body).optJSONArray("ghosts") ?: return@use
+                    val result = mutableListOf<Ghost>()
+                    for (i in 0 until arr.length()) {
+                        val o = arr.getJSONObject(i)
+                        val kind = GhostKind.fromWire(o.optString("kind")) ?: continue
+                        val h7 = o.optString("h7", "")
+                        if (h7.isEmpty()) continue
+                        val details = o.optJSONObject("details")
+                        result.add(Ghost(
+                            id = o.getLong("id"),
+                            kind = kind,
+                            lat = o.getDouble("lat"),
+                            lon = o.getDouble("lon"),
+                            points = o.optInt("points", 0),
+                            name = details?.optString("name")?.takeIf { it.isNotEmpty() && it != "null" },
+                            h7 = h7
+                        ))
+                    }
+                    _ghosts.value = result
+                    Log.d(TAG, "Fetched ${result.size} ghosts")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error fetching ghosts", e)
+            }
+        }
+    }
+
+    /** Letzte 30 Faenge/Gipfel global — Fang-Bestaetigung + Album-Seed. */
+    fun fetchGameFeed() {
+        scope.launch {
+            try {
+                val request = Request.Builder()
+                    .url("${Constants.API_BASE_URL}/api/game/feed")
+                    .get()
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use
+                    val body = response.body?.string() ?: "{}"
+                    val arr = org.json.JSONObject(body).optJSONArray("feed") ?: return@use
+                    val result = mutableListOf<GameFeedEntry>()
+                    for (i in 0 until arr.length()) {
+                        val o = arr.getJSONObject(i)
+                        result.add(GameFeedEntry(
+                            type = o.optString("type"),
+                            what = o.optString("what"),
+                            points = o.optInt("points", 0),
+                            isFirst = o.optBoolean("is_first", false),
+                            caughtAt = o.optString("caught_at"),
+                            lat = if (o.isNull("lat")) null else o.optDouble("lat"),
+                            lon = if (o.isNull("lon")) null else o.optDouble("lon"),
+                            name = if (o.isNull("name")) null else o.optString("name"),
+                            pubkey = if (o.isNull("pubkey")) null else o.optString("pubkey"),
+                            ghostId = if (o.isNull("ghost_id")) null else o.optLong("ghost_id")
+                        ))
+                    }
+                    _gameFeed.value = result
+                    Log.d(TAG, "Fetched ${result.size} feed entries")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error fetching game feed", e)
+            }
+        }
+    }
+
     // MARK: - Fetch Leaderboard
 
     fun fetchLeaderboard() {
