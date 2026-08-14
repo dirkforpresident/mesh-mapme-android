@@ -30,6 +30,15 @@ object Constants {
     const val COVERAGE_TX_MAX_INTERVAL = 42_000L // Max ms between coverage messages
     const val MANUAL_PING_COOLDOWN = 120_000L    // 2 min cooldown for manual ping
     const val MANUAL_DISCOVER_COOLDOWN = 30_000L // 30s cooldown for manual discover
+
+    // MARK: - MeshMonstis Tausch
+    // Entwicklungsbereich FF00–FFFE (keine Registrierung); vor Play-Release
+    // PR auf docs.meshcore.io/number_allocations (z.B. 0x0140 mapme.sh)
+    const val DATA_TYPE_MAPME_TRADE = 0xFF01
+    const val TRADE_OFFER_INTERVAL = 8_000L
+    const val TRADE_TIMEOUT = 90_000L
+    const val TRADE_MAX_PER_DAY = 5
+    const val TRADE_MIN_CARD_AGE = 24 * 60 * 60 * 1000L
 }
 
 // MARK: - Command Codes (App -> Companion)
@@ -45,6 +54,7 @@ enum class CommandCode(val value: Byte) {
     GET_CHANNELS(0x1F),
     SET_CHANNEL(0x20),
     GET_CONTACT_BY_KEY(0x1E),     // 30 - request contact details by pubkey
+    SEND_CHANNEL_DATA(0x3E),      // 62 - Channel-Datagram (MeshMonstis-Tausch, direct zero-hop)
     SIGN_START(0x21),
     SIGN_DATA(0x22),
     SIGN_FINISH(0x23),
@@ -70,7 +80,8 @@ enum class ResponseCode(val value: Byte) {
     CHANNEL_MSG_RECV_V3(0x11),    // Channel message with SNR
     CHANNEL_INFO(0x12),
     SIGNATURE_READY(0x13),
-    SIGNATURE(0x14);
+    SIGNATURE(0x14),
+    CHANNEL_DATA_RECV(0x1B);      // 27 - eingehendes Channel-Datagram
 
     companion object {
         fun fromByte(value: Byte) = entries.find { it.value == value }

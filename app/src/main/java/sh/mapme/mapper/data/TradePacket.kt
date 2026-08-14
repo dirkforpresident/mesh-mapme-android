@@ -46,8 +46,17 @@ data class TradeFrame(
     override fun hashCode(): Int = 31 * ghostId.toInt() + type.value
 }
 
+/**
+ * Unsignierter Meta-Trailer (4 Byte hinter der Sig, gesamt 149 <= 163):
+ * [kind:1][points u16 LE][spriteIndex:1]. Nur Karten-Kosmetik fuer den
+ * Empfaenger (MMG1 traegt nur die ghost_id) — der Anspruch selbst steckt
+ * in den signierten Bytes 0-80. 145-Byte-Frames ohne Trailer bleiben gueltig.
+ */
+data class TradeMeta(val kind: GhostKind, val points: Int, val spriteIndex: Int)
+
 object TradePacket {
     const val SIZE = 145
+    const val SIZE_WITH_META = 149
     const val SIGNED_REGION_END = 81   // exklusiv: Bytes 0..80 werden signiert
 
     private val MAGIC = byteArrayOf(0x4D, 0x4D, 0x47, 0x31) // "MMG1"
@@ -73,8 +82,27 @@ object TradePacket {
         return b
     }
 
+    fun encodeWithMeta(f: TradeFrame, meta: TradeMeta): ByteArray {
+        require(meta.points in 0..0xFFFF) { "points must fit u16" }
+        val b = encode(f).copyOf(SIZE_WITH_META)
+        b[145] = meta.kind.ordinal.toByte()
+        b[146] = (meta.points and 0xFF).toByte()
+        b[147] = ((meta.points shr 8) and 0xFF).toByte()
+        b[148] = meta.spriteIndex.toByte()
+        return b
+    }
+
+    fun decodeMeta(b: ByteArray): TradeMeta? {
+        if (b.size < SIZE_WITH_META) return null
+        val kind = GhostKind.entries.getOrNull(b[145].toInt() and 0xFF) ?: return null
+        val points = (b[146].toInt() and 0xFF) or ((b[147].toInt() and 0xFF) shl 8)
+        return TradeMeta(kind, points, (b[148].toInt() and 0xFF).coerceIn(0, 8))
+    }
+
     fun decode(b: ByteArray): TradeFrame {
-        require(b.size == SIZE) { "MMG1 frame must be $SIZE bytes, got ${b.size}" }
+        require(b.size == SIZE || b.size == SIZE_WITH_META) {
+            "MMG1 frame must be $SIZE or $SIZE_WITH_META bytes, got ${b.size}"
+        }
         require(b.copyOfRange(0, 4).contentEquals(MAGIC)) { "bad magic" }
         val type = TradeType.fromByte(b[4])
             ?: throw IllegalArgumentException("unknown trade type ${b[4]}")
@@ -96,5 +124,22 @@ object TradePacket {
     fun signedRegion(b: ByteArray): ByteArray {
         require(b.size >= SIGNED_REGION_END) { "frame too short" }
         return b.copyOfRange(0, SIGNED_REGION_END)
+    }
+}
+
+
+/** Ed25519-Verify fremder Trade-Sigs (Companion verifiziert nur eigene). */
+object TradeCrypto {
+    fun verify(pubkey: ByteArray, data: ByteArray, signature: ByteArray): Boolean {
+        if (pubkey.size != 32 || signature.size != 64) return false
+        return try {
+            val pk = org.bouncycastle.crypto.params.Ed25519PublicKeyParameters(pubkey, 0)
+            val v = org.bouncycastle.crypto.signers.Ed25519Signer()
+            v.init(false, pk)
+            v.update(data, 0, data.size)
+            v.verifySignature(signature)
+        } catch (e: Exception) {
+            false
+        }
     }
 }

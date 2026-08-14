@@ -114,6 +114,9 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
+    // Ed25519-Verify fuer Mesh-Tausch (Companion signiert, App verifiziert fremde Sigs)
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 

@@ -603,6 +603,78 @@ class BleManager(private val context: Context) {
         Log.d(TAG, "AppStart sent (${command.size} bytes): ${command.toHexString()}")
     }
 
+    // MARK: - MeshMonstis Channel-Datagram (Tausch, Stufe 1-3: NUR Direktfunk)
+
+    data class ChannelDatagram(
+        val channelIdx: Int, val dataType: Int, val snrX4: Int, val payload: ByteArray)
+
+    private val _channelDatagrams =
+        kotlinx.coroutines.flow.MutableSharedFlow<ChannelDatagram>(extraBufferCapacity = 16)
+    val channelDatagrams: kotlinx.coroutines.flow.SharedFlow<ChannelDatagram> = _channelDatagrams
+
+    // Feature-Detect zur Laufzeit: ERR direkt nach 0x3E-Send = alte Firmware
+    // (Versionsmapping des Protokollbytes ist nicht dokumentiert genug fuer
+    // einen Vorab-Check). Kein Fallback auf Chat-Text oder Flood.
+    private val _supportsChannelData = MutableStateFlow(true)
+    val supportsChannelData: StateFlow<Boolean> = _supportsChannelData.asStateFlow()
+    private var lastDatagramSentAt = 0L
+
+    /**
+     * Channel-Datagram senden — IMMER direct zero-hop (path_len 0x00).
+     * 0xFF (Flood) ist in Stufe 1-3 VERBOTEN: Tausch nur in Rufweite,
+     * Repeater fassen nicht an. Unsichtbar fuer Chat-Apps.
+     */
+    fun sendChannelDatagram(channelIdx: Int, dataType: Int, payload: ByteArray) {
+        require(payload.size <= 163) { "datagram payload max 163 bytes" }
+        lastDatagramSentAt = System.currentTimeMillis()
+        // [0x3E][idx][0x00][type LE][payload]   // 0x00 = direct, NICHT 0xFF
+        sendCommand(CommandCode.SEND_CHANNEL_DATA, byteArrayOf(
+            channelIdx.toByte(), 0x00,
+            (dataType and 0xFF).toByte(), ((dataType shr 8) and 0xFF).toByte()
+        ) + payload)
+    }
+
+    private fun parseChannelDataRecv(data: ByteArray) {
+        // [0x1B][snr_x4][2B reserved][channel_idx][path_len][data_type u16 LE][len][payload]
+        if (data.size < 9) return
+        val pathLen = data[5].toInt() and 0xFF
+        val dataType = (data[6].toInt() and 0xFF) or ((data[7].toInt() and 0xFF) shl 8)
+        val len = data[8].toInt() and 0xFF
+        if (data.size < 9 + len) return
+        // Empfangs-Semantik: 0xFF = kam DIREKT. Alles andere = geflutet ->
+        // verwerfen (Stufe 1-3: kein Flood-Tausch, auch nicht empfangen).
+        if (pathLen != 0xFF) {
+            Log.d(TAG, "Channel-Datagram geflutet (pathLen=$pathLen) — verworfen")
+            return
+        }
+        // Bewusst KEIN Coverage-RX, KEIN Sample — reiner Spielkanal
+        _channelDatagrams.tryEmit(ChannelDatagram(
+            data[4].toInt() and 0xFF, dataType, data[1].toInt(), data.sliceArray(9 until 9 + len)))
+    }
+
+    // MARK: - Trade-Signatur (Companion signiert beliebige Bytes)
+
+    private var tradeSignData: ByteArray? = null
+    private var tradeSignDeferred: kotlinx.coroutines.CompletableDeferred<ByteArray?>? = null
+
+    /**
+     * Companion signiert [data] mit dem Geraete-Key (SIGN_START/DATA/FINISH —
+     * derselbe Flow wie die Session-Signatur, aber nie parallel dazu).
+     * Nur im Tauschmodus aufrufen; hinter der Write-Queue.
+     */
+    suspend fun signBytes(data: ByteArray): ByteArray? {
+        if (!_isConnected.value || signingInProgress || tradeSignDeferred != null) return null
+        val deferred = kotlinx.coroutines.CompletableDeferred<ByteArray?>()
+        tradeSignData = data
+        tradeSignDeferred = deferred
+        sendSignStart()
+        val result = kotlinx.coroutines.withTimeoutOrNull(12_000) { deferred.await() }
+        tradeSignData = null
+        tradeSignDeferred = null
+        waitingForSignature = false
+        return result
+    }
+
     // MARK: - Signing Commands
 
     private fun sendSignStart() {
@@ -1291,6 +1363,7 @@ class BleManager(private val context: Context) {
                 ResponseCode.CHANNEL_INFO -> 50
                 ResponseCode.SIGNATURE_READY -> 6
                 ResponseCode.SIGNATURE -> 65
+                ResponseCode.CHANNEL_DATA_RECV -> 9  // [1B snr][2B res][idx][pathLen][type LE][len]
                 ResponseCode.BATTERY_AND_STORAGE -> 11  // [code][mV:2][usedKb:4][totalKb:4]
                 else -> 1
             }
@@ -1389,7 +1462,12 @@ class BleManager(private val context: Context) {
                 log("RX", "OK", "green")
                 // If we're waiting for signature and got OK, signature should follow in next message
             }
-            ResponseCode.ERR -> log("RX", "Error", "red")
+            ResponseCode.ERR -> {
+                if (System.currentTimeMillis() - lastDatagramSentAt < 2_000) {
+                    _supportsChannelData.value = false
+                    log("RX", "Firmware kann kein Channel-Datagram (0x3E)", "orange")
+                } else log("RX", "Error", "red")
+            }
             ResponseCode.CONTACTS_START -> {
                 if (data.size >= 5) {
                     val count = ByteBuffer.wrap(data, 1, 4).order(ByteOrder.LITTLE_ENDIAN).int
@@ -1411,6 +1489,7 @@ class BleManager(private val context: Context) {
             ResponseCode.CHANNEL_MSG_RECV -> parseChannelMessage(data)
             ResponseCode.SIGNATURE_READY -> parseSignatureReady(data)
             ResponseCode.SIGNATURE -> parseSignature(data)
+            ResponseCode.CHANNEL_DATA_RECV -> parseChannelDataRecv(data)
             ResponseCode.BATTERY_AND_STORAGE -> parseBatteryResponse(data)
             else -> log("RX", "Response: $code", "gray")
         }
@@ -1552,6 +1631,15 @@ class BleManager(private val context: Context) {
         // - Bytes 2-5: maxSignDataLen (uint32 LE)
         if (data.size < 6) {
             Log.d(TAG, "SignatureReady too short: ${data.size} bytes")
+            return
+        }
+
+        // Trade-Sign (signBytes): eigener Zweig, Session-Logik nicht anfassen
+        tradeSignData?.let { d ->
+            if (waitingForSignature) return
+            waitingForSignature = true
+            sendSignData(d)
+            scope.launch { delay(300); sendSignFinish() }
             return
         }
 
@@ -1921,6 +2009,12 @@ class BleManager(private val context: Context) {
         // - Byte 0: Response Code (0x14)
         // - Bytes 1-64: signature (64 bytes Ed25519)
         waitingForSignature = false
+
+        // Trade-Sign: Signatur gehoert signBytes(), nicht der Session
+        tradeSignDeferred?.let { def ->
+            def.complete(if (data.size >= 65) data.sliceArray(1 until 65) else null)
+            return
+        }
 
         if (data.size < 65) {
             log("RX", "Signature incomplete (${data.size}B)", "red")

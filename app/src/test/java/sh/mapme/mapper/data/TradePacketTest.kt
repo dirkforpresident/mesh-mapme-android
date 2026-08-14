@@ -4,6 +4,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -121,5 +122,36 @@ class TradePacketTest {
 
     @Test fun `fits meshcore datagram limit`() {
         assertTrue(TradePacket.encode(frame()).size <= 163)
+        assertTrue(TradePacket.encodeWithMeta(frame(),
+            TradeMeta(GhostKind.BERGGEIST, 75, 4)).size <= 163)
+    }
+
+    // ---- Meta-Trailer (unsigniert, nur Karten-Kosmetik) ------------------------------
+
+    @Test fun `meta trailer roundtrip and absent on plain frame`() {
+        val b = TradePacket.encodeWithMeta(frame(), TradeMeta(GhostKind.WIEDERGAENGER, 15, 7))
+        assertEquals(149, b.size)
+        val m = TradePacket.decodeMeta(b)!!
+        assertEquals(GhostKind.WIEDERGAENGER, m.kind)
+        assertEquals(15, m.points)
+        assertEquals(7, m.spriteIndex)
+        assertNull(TradePacket.decodeMeta(TradePacket.encode(frame())))
+        // Kern-Frame bleibt dekodierbar und Sig-Region unveraendert
+        assertEquals(frame().ghostId, TradePacket.decode(b).ghostId)
+        assertArrayEquals(TradePacket.signedRegion(TradePacket.encode(frame())),
+            TradePacket.signedRegion(b))
+    }
+
+    // ---- Ed25519 (RFC 8032 Test Vector 1) --------------------------------------------
+
+    private fun hex(s: String) = s.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+
+    @Test fun `ed25519 verify known vector`() {
+        val pk = hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+        val sig = hex("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")
+        assertTrue(TradeCrypto.verify(pk, ByteArray(0), sig))
+        assertFalse(TradeCrypto.verify(pk, byteArrayOf(1), sig))
+        sig[0] = 0
+        assertFalse(TradeCrypto.verify(pk, ByteArray(0), sig))
     }
 }
