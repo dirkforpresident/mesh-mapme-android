@@ -33,7 +33,9 @@ private val LightColorScheme = lightColorScheme(
 
 @Composable
 fun MapmeMapperTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    // Immer dunkel (wie iOS): die App IST das Spiel — helle System-Themes
+    // machten Session-Card & Co. zu grauen Fremdkörpern auf der dunklen Karte.
+    darkTheme: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme

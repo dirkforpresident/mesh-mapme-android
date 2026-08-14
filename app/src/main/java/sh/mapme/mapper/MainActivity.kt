@@ -5,6 +5,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -92,15 +93,25 @@ fun MainApp() {
         ) {
             composable("map") { MapScreen(viewModel) }
             composable("home") {
-                HomeScreen(
-                    viewModel = viewModel,
-                    onNavigateToDevice = { navController.navigate("device") { popUpTo("map") } },
-                    onNavigateToMap = { navController.popBackStack("map", false) },
-                    onNavigateToAlbum = { navController.navigate("jagd") { popUpTo("map") } }
-                )
+                SubScreen(onBack = { navController.popBackStack("map", false) }) {
+                    HomeScreen(
+                        viewModel = viewModel,
+                        onNavigateToDevice = { navController.navigate("device") { popUpTo("map") } },
+                        onNavigateToMap = { navController.popBackStack("map", false) },
+                        onNavigateToAlbum = { navController.navigate("jagd") { popUpTo("map") } }
+                    )
+                }
             }
-            composable("device") { DeviceScreen(viewModel) }
-            composable("jagd") { sh.mapme.mapper.ui.game.AlbumScreen(viewModel) }
+            composable("device") {
+                SubScreen(onBack = { navController.popBackStack("map", false) }) {
+                    DeviceScreen(viewModel)
+                }
+            }
+            composable("jagd") {
+                SubScreen(onBack = { navController.popBackStack("map", false) }) {
+                    sh.mapme.mapper.ui.game.AlbumScreen(viewModel)
+                }
+            }
         }
 
         if (onMap) {
@@ -145,18 +156,6 @@ fun MainApp() {
                     if (isConnected) "Mesh" else "Verbinden"
                 ) { navController.navigate("device") { popUpTo("map") } }
             }
-        } else {
-            // Nicht auf der Karte: schlanker Zurück-Chip oben links
-            Row(
-                Modifier
-                    .align(androidx.compose.ui.Alignment.TopStart)
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(10.dp)
-            ) {
-                FilledTonalButton(onClick = { navController.popBackStack("map", false) }) {
-                    Text("← Karte")
-                }
-            }
         }
 
         if (showRadar) {
@@ -176,5 +175,24 @@ fun MainApp() {
             hunt = viewModel.ghostHunt,
             modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter)
         )
+    }
+}
+
+/** Unterseiten-Rahmen: eigene Zurück-Zeile ÜBER dem Inhalt — der schwebende
+ *  Chip verdeckte sonst Titel wie „MeshMonstis-Album". */
+@Composable
+fun SubScreen(onBack: () -> Unit, content: @Composable () -> Unit) {
+    androidx.compose.foundation.layout.Column(
+        Modifier
+            .fillMaxSize()
+            // Hintergrund lieferte frueher das Tab-Scaffold — ohne ihn
+            // schien das weisse Window durch (helles Album im Dark-Theme)
+            .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(WindowInsets.statusBars)
+    ) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) {
+            FilledTonalButton(onClick = onBack) { Text("← Karte") }
+        }
+        androidx.compose.foundation.layout.Box(Modifier.weight(1f)) { content() }
     }
 }

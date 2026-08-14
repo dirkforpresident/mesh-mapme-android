@@ -451,6 +451,34 @@ fun HomeScreen(
 
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
+                            text = "\ud83d\udc7b MeshMonstis — das Spiel",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        HowItWorksItem(
+                            title = "Geister fangen",
+                            description = "Einfach mappen \u2014 wer zuerst ein Sample in der Zelle eines Geists erzeugt, hat ihn. Kein Account n\u00f6tig."
+                        )
+                        HowItWorksItem(
+                            title = "\u26f0\ufe0f Berggeist (+50)",
+                            description = "Sitzt am besten Funk-Standort der Gegend \u2014 prominente H\u00fcgel, Aussichts-/Wasserturm, Sendeturm-Gel\u00e4nde. Fang ihn und du stehst am idealen Repeater-Platz."
+                        )
+                        HowItWorksItem(
+                            title = "\ud83d\ude97\ud83c\udf09 Pendler & Br\u00fccke (+150/+250)",
+                            description = "Echte Funkl\u00f6cher \u2014 nur mit Empfang fangbar: erst Repeater bauen, dann mappen."
+                        )
+                        HowItWorksItem(
+                            title = "\ud83c\udfd4 Gipfelbuch",
+                            description = "Jeder Gipfel ist ein Checkpoint: Erstbesteigung +50 und f\u00fcr immer in der Ehrentafel, Wiederbesteigung +10/Monat."
+                        )
+                        HowItWorksItem(
+                            title = "\ud83c\udfc6 Monats-Season",
+                            description = "Startet jeden Monat bei null \u2014 jeder hat eine Chance aufs Podium. Alles auf mapme.sh/game.html."
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
                             text = "Points System",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold

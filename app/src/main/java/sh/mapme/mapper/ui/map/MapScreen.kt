@@ -39,6 +39,9 @@ import sh.mapme.mapper.MapmeApp
 import sh.mapme.mapper.data.HexColor
 import java.io.File
 
+/** Einmal pro Prozess-Lauf: Permission-Disclosures nicht bei jedem Karten-Besuch wiederholen. */
+private var disclosureShownThisRun = false
+
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun MapScreen(
@@ -93,10 +96,16 @@ fun MapScreen(
             osmdroidTileCache = File(context.cacheDir, "osmdroid/tiles")
         }
 
-        if (!locationPermissions.allPermissionsGranted) {
-            showLocationDisclosure = true
-        } else if (!hasBackgroundLocation) {
-            showBackgroundLocationDisclosure = true
+        // Nur EINMAL pro App-Start fragen: seit der GameShell wird der
+        // MapScreen bei jeder Rueckkehr zur Karte neu komponiert — der
+        // Disclosure-Dialog nervte sonst bei jedem Screenwechsel.
+        if (!disclosureShownThisRun) {
+            disclosureShownThisRun = true
+            if (!locationPermissions.allPermissionsGranted) {
+                showLocationDisclosure = true
+            } else if (!hasBackgroundLocation) {
+                showBackgroundLocationDisclosure = true
+            }
         }
     }
 
@@ -619,7 +628,7 @@ fun MapScreen(
         // Map controls (top-right): location + dark/light toggle
         Row(
             modifier = Modifier
-                .padding(end = 12.dp, top = 64.dp)   // unter der Mesh-LED
+                .padding(end = 12.dp, top = 104.dp)   // unter der Mesh-LED
                 .align(Alignment.TopEnd),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
