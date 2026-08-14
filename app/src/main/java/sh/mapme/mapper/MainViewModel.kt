@@ -19,6 +19,7 @@ class MainViewModel : ViewModel() {
     val locationService = app.locationService
     val sampleRepository = app.sampleRepository
     val hexService = app.hexService
+    val ghostHunt = app.ghostHunt
 
     // Convenience flows
     val isConnected = bleManager.isConnected

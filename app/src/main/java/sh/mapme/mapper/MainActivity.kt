@@ -117,10 +117,11 @@ fun MainApp() {
             }
         }
     ) { innerPadding ->
+        androidx.compose.foundation.layout.Box(Modifier.padding(innerPadding).fillMaxSize()) {
         NavHost(
             navController = navController,
             startDestination = "home",
-            modifier = Modifier.padding(innerPadding)
+            modifier = Modifier.fillMaxSize()
         ) {
             composable("home") {
                 HomeScreen(
@@ -135,6 +136,13 @@ fun MainApp() {
             }
             composable("device") { DeviceScreen(viewModel) }
             composable("map") { MapScreen(viewModel) }
+        }
+
+        // Fang-Toast schwebt ueber allen Tabs
+        sh.mapme.mapper.ui.game.CatchToastHost(
+            hunt = viewModel.ghostHunt,
+            modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter)
+        )
         }
     }
 }

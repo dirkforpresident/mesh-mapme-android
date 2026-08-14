@@ -25,6 +25,9 @@ class MapmeApp : Application() {
     lateinit var feedbackManager: FeedbackManager
         private set
 
+    lateinit var ghostHunt: GhostHuntManager
+        private set
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -38,6 +41,10 @@ class MapmeApp : Application() {
 
         // Wire feedback to BLE manager
         bleManager.feedbackManager = feedbackManager
+
+        // MeshMonstis: Fang-Erkennung (beobachtet Location + Samples + Geister)
+        ghostHunt = GhostHuntManager(hexService, sampleRepository, bleManager,
+            locationService, feedbackManager)
 
         // Wire up dependencies
         sampleRepository.hexService = hexService

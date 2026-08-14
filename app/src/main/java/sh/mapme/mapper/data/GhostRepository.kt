@@ -1,6 +1,16 @@
 package sh.mapme.mapper.data
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
 import sh.mapme.mapper.H3Native
+import sh.mapme.mapper.util.FeedbackManager
 
 /**
  * GhostRepository.kt — pure Radar-Mathematik (Task 2).
@@ -65,4 +75,104 @@ object GhostMath {
         }
         return out
     }
+}
+
+
+/**
+ * GhostHuntManager — Fang-Erkennung waehrend der Fahrt (Task 5).
+ *
+ * Optimistischer Toast: GPS in der Geister-Zelle + neues Sample dieser
+ * Session dort (rx-only-Typen brauchen ein rx). Wahrheit bleibt der Server:
+ * innerhalb 3 min /api/game/feed pollen und den eigenen Pubkey + ghost_id
+ * matchen — erst dann ist der Fang fest ("jemand war schneller" ist moeglich,
+ * der Serverjob laeuft alle ~2 min).
+ */
+class GhostHuntManager(
+    private val hexService: HexService,
+    private val sampleRepository: SampleRepository,
+    private val bleManager: BleManager,
+    private val locationService: LocationService,
+    private val feedbackManager: FeedbackManager,
+    private val h3: H3Cells = NativeH3Cells
+) {
+    enum class CatchStatus { PENDING, CONFIRMED, MISSED }
+    data class CatchEvent(val ghost: Ghost, val status: CatchStatus, val confirmedPoints: Int? = null)
+
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    private val _catchEvent = MutableStateFlow<CatchEvent?>(null)
+    val catchEvent: StateFlow<CatchEvent?> = _catchEvent.asStateFlow()
+
+    /** Wird in Task 6 gesetzt — bestaetigte Faenge landen im Album. */
+    var onConfirmedCatch: ((Ghost, Int) -> Unit)? = null
+
+    private val toastedIds = mutableSetOf<Long>()
+    private var currentCellId: String? = null
+    private var cellSampleBaseline = 0
+    private var cellRxBaseline = 0
+
+    init {
+        scope.launch {
+            combine(
+                locationService.currentLocation,
+                sampleRepository.samples,
+                sampleRepository.totalUploaded,
+                hexService.ghosts,
+                bleManager.privacyMode
+            ) { loc, pending, uploaded, ghosts, pm ->
+                Snapshot(loc?.latitude, loc?.longitude, pending.size + uploaded,
+                    bleManager.rxCount.value, ghosts, pm)
+            }.collect { snap -> check(snap) }
+        }
+    }
+
+    private data class Snapshot(
+        val lat: Double?, val lon: Double?, val sampleTotal: Int,
+        val rxTotal: Int, val ghosts: List<Ghost>, val privacy: String)
+
+    private fun check(s: Snapshot) {
+        if (s.lat == null || s.lon == null) return
+        if (s.privacy == "anonym") return   // anonym faengt serverseitig nichts
+
+        val myCell = try { h3.h7Of(s.lat, s.lon) } catch (e: Exception) { return }
+        if (myCell != currentCellId) {
+            // Zellwechsel: Baseline neu — nur Samples AUS dieser Zelle zaehlen
+            currentCellId = myCell
+            cellSampleBaseline = s.sampleTotal
+            cellRxBaseline = s.rxTotal
+        }
+
+        val ghost = s.ghosts.firstOrNull { it.h7 == myCell && it.id !in toastedIds } ?: return
+        val sampled = s.sampleTotal > cellSampleBaseline
+        val rxHere = s.rxTotal > cellRxBaseline
+        if (!sampled) return
+        if (ghost.kind.rxOnly && !rxHere) return
+
+        toastedIds.add(ghost.id)
+        _catchEvent.value = CatchEvent(ghost, CatchStatus.PENDING)
+        scope.launch { confirmViaFeed(ghost) }
+    }
+
+    private suspend fun confirmViaFeed(ghost: Ghost) {
+        val myPubkey = bleManager.selfInfo.value?.publicKey?.toHexString() ?: return
+        repeat(7) {
+            delay(30_000)
+            hexService.fetchGameFeed()
+            delay(2_000)   // Fetch ist async — kurz auf den Flow warten
+            val hit = hexService.gameFeed.value.firstOrNull {
+                it.ghostId == ghost.id && it.pubkey == myPubkey
+            }
+            if (hit != null) {
+                feedbackManager.playCatch()
+                _catchEvent.value = CatchEvent(ghost, CatchStatus.CONFIRMED, hit.points)
+                onConfirmedCatch?.invoke(ghost, hit.points)
+                return
+            }
+        }
+        _catchEvent.value = CatchEvent(ghost, CatchStatus.MISSED)
+    }
+
+    fun dismissToast() { _catchEvent.value = null }
+
+    fun cleanup() { /* scope lebt so lange wie die App */ }
 }
