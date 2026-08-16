@@ -339,8 +339,11 @@ class HexService {
                     for (i in 0 until arr.length()) {
                         val o = arr.getJSONObject(i)
                         val kind = GhostKind.fromWire(o.optString("kind")) ?: continue
-                        val h7 = o.optString("h7", "")
+                        // cell/cell_res sind maßgeblich; h7 nur als Rückfall,
+                        // solange ältere Server das neue Feld nicht liefern.
+                        val h7 = o.optString("cell", "").ifEmpty { o.optString("h7", "") }
                         if (h7.isEmpty()) continue
+                        val cellRes = o.optInt("cell_res", 7)
                         val details = o.optJSONObject("details")
                         result.add(Ghost(
                             id = o.getLong("id"),
@@ -348,6 +351,7 @@ class HexService {
                             lat = o.getDouble("lat"),
                             lon = o.getDouble("lon"),
                             points = o.optInt("points", 0),
+                            cellRes = cellRes,
                             name = details?.optString("name")?.takeIf { it.isNotEmpty() && it != "null" },
                             h7 = h7,
                             site = details?.optString("site")?.takeIf { it.isNotEmpty() },

@@ -44,7 +44,10 @@ data class Ghost(
     val lon: Double,
     val points: Int,
     val name: String?,
-    val h7: String,
+    val h7: String,                 // Fang-Zelle (Feldname historisch)
+    /** Auflösung der Fang-Zelle. Kommt vom Server, damit sie ohne App-Update
+     *  änderbar bleibt — seit 2026-08-16 ist sie 8 (~460 m) statt 7 (~1,2 km). */
+    val cellRes: Int = 7,
     // Berggeist-Standort-Details vom Server (Defaults: alte Aufrufer/Seeds ok)
     val site: String? = null,       // gipfel|aussichtsturm|wasserturm|sendemast|bruecke
     val hinweis: String? = null,    // Nach-dem-Fang-Satz (ohne rx)

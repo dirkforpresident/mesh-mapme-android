@@ -38,10 +38,20 @@ class GhostRepositoryTest {
 
     // ---- inCell über Interface (kein JNI im JVM-Test) --------------------------------
 
-    @Test fun `inCell compares server h7 against own cell`() {
-        val fake = H3Cells { _, _ -> "871f18d84ffffff" }
+    @Test fun `inCell compares server cell against own cell`() {
+        val fake = H3Cells { _, _, _ -> "871f18d84ffffff" }
         assertTrue(GhostMath.inCell(53.0, 10.0, ghost(h7 = "871f18d84ffffff"), fake))
         assertFalse(GhostMath.inCell(53.0, 10.0, ghost(h7 = "871f18d85ffffff"), fake))
+    }
+
+    /** Die Auflösung kommt seit 2026-08-16 vom Server (7 = alt, 8 = ~460 m).
+     *  Der Vergleich muss die des jeweiligen Geists benutzen, nicht eine feste. */
+    @Test fun `inCell uses the resolution the ghost declares`() {
+        val fake = H3Cells { _, _, res -> if (res == 8) "881f18d841fffff" else "871f18d84ffffff" }
+        val h8Ghost = ghost(h7 = "881f18d841fffff").copy(cellRes = 8)
+        assertTrue(GhostMath.inCell(53.0, 10.0, h8Ghost, fake))
+        // Mit der alten Auflösung wuerde derselbe Geist NICHT als getroffen gelten
+        assertFalse(GhostMath.inCell(53.0, 10.0, h8Ghost.copy(cellRes = 7), fake))
     }
 
     // ---- nearestByKind ---------------------------------------------------------------

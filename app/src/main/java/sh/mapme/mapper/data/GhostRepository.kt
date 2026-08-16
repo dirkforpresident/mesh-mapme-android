@@ -20,12 +20,14 @@ import sh.mapme.mapper.util.FeedbackManager
  */
 
 fun interface H3Cells {
-    fun h7Of(lat: Double, lon: Double): String
+    /** Zelle in der vom Server vorgegebenen Auflösung (7 oder 8). */
+    fun cellOf(lat: Double, lon: Double, res: Int): String
+    fun h7Of(lat: Double, lon: Double): String = cellOf(lat, lon, 7)
 }
 
 object NativeH3Cells : H3Cells {
-    override fun h7Of(lat: Double, lon: Double): String =
-        H3Native.latLngToCell(lat, lon, 7)
+    override fun cellOf(lat: Double, lon: Double, res: Int): String =
+        H3Native.latLngToCell(lat, lon, if (res == 8) 8 else 7)
 }
 
 object GhostMath {
@@ -58,7 +60,7 @@ object GhostMath {
 
     /** Steht der Mapper in der Zelle des Geists? Server-h7 gegen eigenes h7. */
     fun inCell(meLat: Double, meLon: Double, ghost: Ghost, h3: H3Cells = NativeH3Cells): Boolean =
-        h3.h7Of(meLat, meLon) == ghost.h7
+        h3.cellOf(meLat, meLon, ghost.cellRes) == ghost.h7
 
     /** Nächster Geist mit Distanz in Metern. */
     data class Nearest(val ghost: Ghost, val distanceM: Double, val bearing: Double)
@@ -136,7 +138,12 @@ class GhostHuntManager(
         if (s.lat == null || s.lon == null) return
         if (s.privacy == "anonym") return   // anonym faengt serverseitig nichts
 
-        val myCell = try { h3.h7Of(s.lat, s.lon) } catch (e: Exception) { return }
+        // Beide vorgesehenen Auflösungen vorhalten — welche zählt, entscheidet
+        // der einzelne Geist über cellRes.
+        val meineZelle = try {
+            mapOf(7 to h3.cellOf(s.lat, s.lon, 7), 8 to h3.cellOf(s.lat, s.lon, 8))
+        } catch (e: Exception) { return }
+        val myCell = meineZelle[7] ?: return
         if (myCell != currentCellId) {
             // Zellwechsel: Baseline neu — nur Samples AUS dieser Zelle zaehlen
             currentCellId = myCell
@@ -144,7 +151,8 @@ class GhostHuntManager(
             cellRxBaseline = s.rxTotal
         }
 
-        val ghost = s.ghosts.firstOrNull { it.h7 == myCell && it.id !in toastedIds } ?: return
+        val ghost = s.ghosts.firstOrNull {
+            it.h7 == (meineZelle[it.cellRes] ?: myCell) && it.id !in toastedIds } ?: return
         val sampled = s.sampleTotal > cellSampleBaseline
         val rxHere = s.rxTotal > cellRxBaseline
         if (!sampled) return
