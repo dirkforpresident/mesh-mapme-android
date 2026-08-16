@@ -170,10 +170,16 @@ fun MainApp() {
         // Tausch-UI (Sheet + eingehende Angebote) global
         sh.mapme.mapper.ui.game.TradeSheetHost(viewModel)
 
-        // Fang-Toast schwebt ueber allem
+        // Fang-Toast schwebt ueber allem — aber UNTER der Spieler-Leiste:
+        // ohne Insets lag er auf Uhrzeit/Akku, mit Insets allein auf
+        // Spieler-Chip und Mesh-LED (Tester-Screenshot + Audit 2026-08-16).
+        // 60dp = Chip-Hoehe (Textspalte 2x24dp + 2x6dp), 6dp = Row-Padding.
         sh.mapme.mapper.ui.game.CatchToastHost(
             hunt = viewModel.ghostHunt,
-            modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter)
+            modifier = Modifier
+                .align(androidx.compose.ui.Alignment.TopCenter)
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(top = 66.dp)
         )
     }
 }

@@ -12,8 +12,8 @@ android {
         applicationId = "sh.mapme.mapper"
         minSdk = 26
         targetSdk = 35
-        versionCode = 99
-        versionName = "1.2.2"
+        versionCode = 100
+        versionName = "1.2.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

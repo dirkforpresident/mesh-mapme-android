@@ -45,14 +45,20 @@ private var disclosureShownThisRun = false
 // Freiräume für die Spiel-Leisten aus MainActivity, die als eigene Ebene ÜBER
 // dieser Karte liegen. Die Leisten rechnen die System-Insets mit — diese
 // Overlays taten es bis v1.2.1 nicht und lagen auf Geräten mit Gesten-Navigation
-// unter den Spiel-Buttons (Tester-Screenshot 2026-08-16). Werte = Höhe der
-// jeweiligen Leiste plus Luft:
-//   oben  Spieler-Chip 38dp + 2x6dp Padding
-//   unten Seiten-Buttons 52dp + Label + 2x10dp Padding
-//   Mitte Monsti-Button 84dp + 2x10dp Padding
-private val GAME_BAR_TOP = 62.dp
-private val GAME_BAR_SIDE = 90.dp
+// unter den Spiel-Buttons (Tester-Screenshot 2026-08-16).
+// ACHTUNG beim Nachrechnen: Die Labels setzen nur fontSize=11.sp, nicht style —
+// die lineHeight von bodyLarge (24dp) bleibt stehen. Eine "kleine" Textzeile ist
+// also 24dp hoch, nicht 13dp. Deshalb sind die Leisten höher als sie aussehen:
+//   oben  Spieler-Chip = Textspalte 2x24dp + 2x6dp = 60dp, +6dp Row-Padding
+//   unten Seiten-Button = Icon 52dp + 3dp + Label 24dp = 79dp, +10dp Padding
+//         (mit Reserve für Systemschriftgröße > 100 %)
+//   Mitte Monsti-Button = 84dp + 2x10dp, Puls-Ring zeichnet bis ~107dp
+private val GAME_BAR_TOP = 72.dp
+private val GAME_BAR_SIDE = 100.dp
 private val GAME_BAR_CENTER = 112.dp
+// Die Geister-Infokarte ist breit und hoch — solange sie offen ist, treten die
+// seitlichen Overlays zur Seite, statt sich mit ihr zu überlagern.
+
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -582,8 +588,10 @@ fun MapScreen(
             }
         }
 
-        // Activity feed (bottom-left) - collapsible
-        if (recentRxPackets.isNotEmpty()) {
+        // Activity feed (bottom-left) - collapsible.
+        // Weicht der Geister-Infokarte: die ist fast bildschirmbreit und lag
+        // sonst unter Feed und DISC/PING (Audit 2026-08-16).
+        if (recentRxPackets.isNotEmpty() && selectedGhost.value == null) {
             Card(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
@@ -727,8 +735,9 @@ fun MapScreen(
             }
         }
 
-        // Discover/Ping buttons (bottom-right) — only when connected in live mode
-        if (isConnected && privacyMode == "live") {
+        // Discover/Ping buttons (bottom-right) — only when connected in live mode;
+        // treten wie der Feed zur Seite, solange die Geister-Infokarte offen ist
+        if (isConnected && privacyMode == "live" && selectedGhost.value == null) {
             var discoverCooldown by remember { mutableStateOf(0) }
             var pingCooldown by remember { mutableStateOf(0) }
 
@@ -803,8 +812,9 @@ fun MapScreen(
         if (!isTracking) {
             Card(
                 modifier = Modifier
-                    .padding(top = 64.dp)   // unter den Shell-Chips
-                    .align(Alignment.TopCenter),
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(top = GAME_BAR_TOP),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.errorContainer
                 )
