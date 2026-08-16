@@ -42,6 +42,18 @@ import java.io.File
 /** Einmal pro Prozess-Lauf: Permission-Disclosures nicht bei jedem Karten-Besuch wiederholen. */
 private var disclosureShownThisRun = false
 
+// Freiräume für die Spiel-Leisten aus MainActivity, die als eigene Ebene ÜBER
+// dieser Karte liegen. Die Leisten rechnen die System-Insets mit — diese
+// Overlays taten es bis v1.2.1 nicht und lagen auf Geräten mit Gesten-Navigation
+// unter den Spiel-Buttons (Tester-Screenshot 2026-08-16). Werte = Höhe der
+// jeweiligen Leiste plus Luft:
+//   oben  Spieler-Chip 38dp + 2x6dp Padding
+//   unten Seiten-Buttons 52dp + Label + 2x10dp Padding
+//   Mitte Monsti-Button 84dp + 2x10dp Padding
+private val GAME_BAR_TOP = 62.dp
+private val GAME_BAR_SIDE = 90.dp
+private val GAME_BAR_CENTER = 112.dp
+
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun MapScreen(
@@ -495,8 +507,9 @@ fun MapScreen(
                 onClose = { selectedGhost.value = null },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
                     .padding(horizontal = 24.dp)
-                    .padding(bottom = 104.dp)   // ueber den GameShell-Buttons
+                    .padding(bottom = GAME_BAR_CENTER)
             )
         }
 
@@ -504,8 +517,9 @@ fun MapScreen(
         if (showStats) {
             Card(
                 modifier = Modifier
-                    .padding(start = 12.dp, top = 104.dp)   // unter dem Spieler-Chip
                     .align(Alignment.TopStart)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(start = 12.dp, top = GAME_BAR_TOP)
                     .clickable { showStats = false },
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
@@ -545,8 +559,9 @@ fun MapScreen(
             // Collapsed stats
             Card(
                 modifier = Modifier
-                    .padding(start = 12.dp, top = 104.dp)   // unter dem Spieler-Chip
                     .align(Alignment.TopStart)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(start = 12.dp, top = GAME_BAR_TOP)
                     .clickable { showStats = true },
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
@@ -571,8 +586,9 @@ fun MapScreen(
         if (recentRxPackets.isNotEmpty()) {
             Card(
                 modifier = Modifier
-                    .padding(start = 12.dp, bottom = 96.dp)   // ueber dem Album-Button
                     .align(Alignment.BottomStart)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(start = 12.dp, bottom = GAME_BAR_SIDE)
                     .clickable { showActivityFeed = !showActivityFeed },
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
@@ -628,8 +644,9 @@ fun MapScreen(
         // Map controls (top-right): location + dark/light toggle
         Row(
             modifier = Modifier
-                .padding(end = 12.dp, top = 104.dp)   // unter der Mesh-LED
-                .align(Alignment.TopEnd),
+                .align(Alignment.TopEnd)
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(end = 12.dp, top = GAME_BAR_TOP),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             // Toggle follow location — keep current zoom
@@ -725,8 +742,9 @@ fun MapScreen(
 
             Column(
                 modifier = Modifier
-                    .padding(end = 12.dp, bottom = 96.dp)   // ueber dem Verbinden-Button
-                    .align(Alignment.BottomEnd),
+                    .align(Alignment.BottomEnd)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(end = 12.dp, bottom = GAME_BAR_SIDE),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // Discover button
