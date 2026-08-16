@@ -152,7 +152,69 @@ class GhostHuntManager(
 
         toastedIds.add(ghost.id)
         _catchEvent.value = CatchEvent(ghost, CatchStatus.PENDING, rx = rxHere)
+        merkeOffen(ghost, rxHere)
         scope.launch { confirmViaFeed(ghost, rxHere) }
+    }
+
+    // ── Offene Fänge überleben App-Neustarts ─────────────────────────────
+    // Der Fang wird SERVERSEITIG entschieden, sobald das Sample hochgeladen
+    // ist — auf einem Gipfel ohne Mobilfunk dauert das Stunden. Bis
+    // 2026-08-16 gab die App nach 7×30 s auf und meldete "verpasst", obwohl
+    // der Fang später zählte: ausgerechnet an den Orten, an die das Spiel
+    // schicken will (Berge, Türme, abgelegene Ecken), war die Rückmeldung
+    // damit praktisch immer falsch.
+    private data class OffenerFang(val ghostId: Long, val rx: Boolean, val since: Long)
+
+    private val offenePref by lazy {
+        appContext?.getSharedPreferences("pending_catches", android.content.Context.MODE_PRIVATE)
+    }
+    /** Wird von MapmeApp gesetzt, damit der Manager ohne Context auskommt. */
+    var appContext: android.content.Context? = null
+
+    private fun ladeOffene(): MutableList<OffenerFang> {
+        val roh = offenePref?.getString("liste", "") ?: ""
+        return roh.split(";").filter { it.isNotBlank() }.mapNotNull {
+            val t = it.split(",")
+            if (t.size == 3) OffenerFang(t[0].toLong(), t[1] == "1", t[2].toLong()) else null
+        }.toMutableList()
+    }
+    private fun speichereOffene(l: List<OffenerFang>) {
+        offenePref?.edit()?.putString("liste",
+            l.joinToString(";") { "${it.ghostId},${if (it.rx) 1 else 0},${it.since}" })?.apply()
+    }
+    private fun merkeOffen(ghost: Ghost, rx: Boolean) {
+        val l = ladeOffene()
+        if (l.none { it.ghostId == ghost.id }) {
+            l.add(OffenerFang(ghost.id, rx, System.currentTimeMillis()))
+            speichereOffene(l)
+        }
+    }
+
+    /** Gleicht offene Fänge mit dem Server-Feed ab — beim App-Start und nach
+     *  jedem Upload. Feiert nachträglich, statt den Fang zu verschlucken. */
+    fun pruefeOffeneFaenge() {
+        val myPubkey = bleManager.selfInfo.value?.publicKey?.toHexString() ?: return
+        val offen = ladeOffene()
+        if (offen.isEmpty()) return
+        scope.launch {
+            hexService.fetchGameFeed()
+            delay(2_000)
+            val feed = hexService.gameFeed.value
+            val uebrig = mutableListOf<OffenerFang>()
+            for (o in offen) {
+                val hit = feed.firstOrNull { it.ghostId == o.ghostId && it.pubkey == myPubkey }
+                val ghost = hexService.ghosts.value.firstOrNull { it.id == o.ghostId }
+                if (hit != null && ghost != null) {
+                    feedbackManager.playCatch()
+                    _catchEvent.value = CatchEvent(ghost, CatchStatus.CONFIRMED, hit.points, rx = o.rx)
+                    onConfirmedCatch?.invoke(ghost, hit.points)
+                } else if (System.currentTimeMillis() - o.since < 14L * 86_400_000) {
+                    uebrig.add(o)   // Upload steht noch aus
+                }
+                // älter als 14 Tage: still verfallen lassen
+            }
+            speichereOffene(uebrig)
+        }
     }
 
     private suspend fun confirmViaFeed(ghost: Ghost, rx: Boolean) {
@@ -168,10 +230,13 @@ class GhostHuntManager(
                 feedbackManager.playCatch()
                 _catchEvent.value = CatchEvent(ghost, CatchStatus.CONFIRMED, hit.points, rx = rx)
                 onConfirmedCatch?.invoke(ghost, hit.points)
+                val l = ladeOffene(); l.removeAll { it.ghostId == ghost.id }; speichereOffene(l)
                 return
             }
         }
-        _catchEvent.value = CatchEvent(ghost, CatchStatus.MISSED, rx = rx)
+        // NICHT "verpasst" melden — der Fang liegt meist nur am ausstehenden
+        // Upload und bleibt in der offenen Liste. Der Toast verschwindet still.
+        if (_catchEvent.value?.ghost?.id == ghost.id) _catchEvent.value = null
     }
 
     fun dismissToast() { _catchEvent.value = null }
