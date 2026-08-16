@@ -133,19 +133,33 @@ class SampleRepository(private val context: Context) {
                 Log.d(TAG, "Uploading with unverified session (server may reject)")
             }
 
-            // Identität merken bzw. auffüllen. SelfInfo liefert den nodeName in
-            // der Praxis oft leer — dann nehmen wir den BLE-Gerätenamen (wie die
-            // Geräte-Ansicht) und zur Not die zuletzt gespeicherte Identität.
+            // Identität merken bzw. auffüllen — NUR aus der SelfInfo des Geräts.
+            // Der BLE-Advertising-Name ("MeshCore-<Node>") war hier bis 2026-08-16
+            // als Fallback drin: er ist NIE der Node-Name und erzeugte auf dem
+            // Server lauter "MeshCore-…"-Karteileichen. Der leere nodeName war in
+            // Wahrheit die Folge des SelfInfo-Fehlparsings (siehe BleManager).
             val self = ble.selfInfo.value
             val selfPubkey = self?.publicKey?.joinToString("") { "%02x".format(it) } ?: ""
-            val selfName = (self?.nodeName ?: "").ifEmpty { ble.connectedDeviceName.value ?: "" }
+            val selfName = self?.nodeName ?: ""
             if (selfPubkey.isNotEmpty()) {
                 context.dataStore.edit { prefs ->
                     prefs[LAST_PUBKEY_KEY] = selfPubkey
                     if (selfName.isNotEmpty()) prefs[LAST_NAME_KEY] = selfName
                 }
             }
-            val storedPrefs = context.dataStore.data.first()
+            var storedPrefs = context.dataStore.data.first()
+            // Altlast-Bereinigung: Installationen vor dem Fix haben eine kaputte
+            // Identität gespeichert (fremder Pubkey + "MeshCore-…"-Name aus dem
+            // Advertising). Erkennbar am Präfix — einmalig verwerfen, damit die
+            // Karteileiche nicht weiterlebt.
+            if ((storedPrefs[LAST_NAME_KEY] ?: "").startsWith("MeshCore-")) {
+                Log.w(TAG, "Verworfene Alt-Identität aus dem Speicher (MeshCore-Präfix)")
+                context.dataStore.edit { prefs ->
+                    prefs.remove(LAST_PUBKEY_KEY)
+                    prefs.remove(LAST_NAME_KEY)
+                }
+                storedPrefs = context.dataStore.data.first()
+            }
             val fallbackPubkey = storedPrefs[LAST_PUBKEY_KEY] ?: ""
             val fallbackName = selfName.ifEmpty { storedPrefs[LAST_NAME_KEY] ?: "" }
 

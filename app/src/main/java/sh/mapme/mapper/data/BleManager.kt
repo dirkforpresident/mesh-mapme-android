@@ -78,6 +78,17 @@ class BleManager(private val context: Context) {
     private val _selfInfo = MutableStateFlow<SelfInfo?>(null)
     val selfInfo: StateFlow<SelfInfo?> = _selfInfo.asStateFlow()
 
+    // Die eigene Identität kommt AUSSCHLIESSLICH aus der Antwort auf AppStart.
+    // Ohne diese Schranke schlug die SelfInfo-Heuristik unten (Code 0x01/0x02/0x03
+    // + >=57 Bytes) auch bei CONTACT-Frames (0x03) zu, die der Auto-Discover alle
+    // 30 s per GET_CONTACT_BY_KEY anfordert. Der Parser las dann den Pubkey eines
+    // FREMDEN Repeaters um 2 Bytes verschoben als "das bin ich" — dadurch bekam
+    // jeder Nutzer pro Fahrt eine neue Server-Identität und seine Punkte
+    // zersplitterten (bis zu 11 Accounts/Tag, Fund vom 2026-08-16).
+    private var expectingSelfInfo = false
+    // Läuft eine gezielte Kontakt-Abfrage, ist ein 0x03-Frame IMMER ein Kontakt.
+    private var pendingContactByKey = 0
+
     private val _deviceInfo = MutableStateFlow<DeviceInfo?>(null)
     val deviceInfo: StateFlow<DeviceInfo?> = _deviceInfo.asStateFlow()
 
@@ -585,6 +596,7 @@ class BleManager(private val context: Context) {
             return
         }
         appStartSent = true
+        expectingSelfInfo = true   // ab jetzt (und nur jetzt) ist SelfInfo plausibel
 
         // AppStart Command Format (from iOS):
         // Byte 0: 0x01 (CommandCode.AppStart)
@@ -1266,10 +1278,26 @@ class BleManager(private val context: Context) {
         // And 0x02/0x03/0x04 are also ContactsStart/Contact/ContactsEnd during sync
         // Differentiate by buffer size: SelfInfo is always 57+ bytes, ERR is 1-2 bytes
         // During contact sync, 0x02 (96+ bytes) is Contact, not SelfInfo
+        // expectingSelfInfo: nur direkt nach AppStart. Sonst ist ein 0x03-Frame
+        // die Antwort auf GET_CONTACT_BY_KEY und gehört an parseContactResponse.
+        if (code == 0x03 && pendingContactByKey > 0 && rxBuffer.size >= 57 &&
+            (lastFragmentSize < 20 || bufferTimedOut)) {
+            pendingContactByKey--
+            Log.d(TAG, "Contact-by-key response (${rxBuffer.size}B) — nicht SelfInfo")
+            handleResponse(ResponseCode.CONTACT, rxBuffer)
+            rxBuffer = byteArrayOf()
+            return
+        }
         if (code in listOf(0x01, 0x02, 0x03) && !_contactSyncRunning.value) {
             if (rxBuffer.size >= 57 && (lastFragmentSize < 20 || bufferTimedOut)) {
+                if (!expectingSelfInfo) {
+                    Log.d(TAG, "Frame 0x${"%02x".format(code)} (${rxBuffer.size}B) verworfen — keine SelfInfo erwartet")
+                    rxBuffer = byteArrayOf()
+                    return
+                }
                 // Complete message (end fragment received or timeout) - parse now
                 Log.d(TAG, "Parsing as SelfInfo (type=$code, size=${rxBuffer.size}, complete)")
+                expectingSelfInfo = false
                 parseSelfInfoRaw(rxBuffer)
                 rxBuffer = byteArrayOf()
                 return
@@ -2185,6 +2213,7 @@ class BleManager(private val context: Context) {
         val shortId = pubkeyBytes.joinToString("") { "%02x".format(it) }.take(8)
         Log.d(TAG, "Requesting contact details for $shortId...")
 
+        pendingContactByKey++   // die 0x03-Antwort darf nie als SelfInfo gelten
         sendRawData(frame)
     }
 
@@ -2483,6 +2512,8 @@ class BleManager(private val context: Context) {
         // Note: autoReconnectCount is NOT reset here - it persists across reconnects
         // and is only reset on successful verification
         appStartSent = false
+        expectingSelfInfo = false
+        pendingContactByKey = 0
         waitingForSignature = false
         lastRxTime = null
         lastTxTime = null
