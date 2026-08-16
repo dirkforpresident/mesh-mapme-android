@@ -297,6 +297,17 @@ class HexService {
     private val _ghosts = MutableStateFlow<List<Ghost>>(emptyList())
     val ghosts: StateFlow<List<Ghost>> = _ghosts.asStateFlow()
 
+    /** Selbst gefangene Geister sofort ausblenden. Der Server erfährt vom Fang
+     *  erst mit dem nächsten Upload und die Liste wird nur alle paar Minuten
+     *  geholt — bis 2026-08-16 stand der Geist deshalb minutenlang weiter auf
+     *  der Karte und der Spieler wusste nicht, ob er ihn hat (Tester-Rückmeldung).
+     *  Stellt sich der Fang als Irrtum heraus, kommt er beim nächsten Abruf zurück. */
+    private val versteckt = mutableSetOf<Long>()
+    fun verstecke(id: Long) {
+        versteckt.add(id)
+        _ghosts.value = _ghosts.value.filterNot { it.id == id }
+    }
+
     private val _gameFeed = MutableStateFlow<List<GameFeedEntry>>(emptyList())
     val gameFeed: StateFlow<List<GameFeedEntry>> = _gameFeed.asStateFlow()
 
@@ -344,7 +355,7 @@ class HexService {
                             hinweisRx = details?.optString("hinweis_rx")?.takeIf { it.isNotEmpty() }
                         ))
                     }
-                    _ghosts.value = result
+                    _ghosts.value = result.filterNot { it.id in versteckt }
                     Log.d(TAG, "Fetched ${result.size} ghosts")
                 }
             } catch (e: Exception) {

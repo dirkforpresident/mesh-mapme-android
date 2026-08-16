@@ -151,6 +151,9 @@ class GhostHuntManager(
         if (ghost.kind.rxOnly && !rxHere) return
 
         toastedIds.add(ghost.id)
+        // Sofort von der Karte nehmen — der Server weiß vom Fang erst nach dem
+        // Upload, bis dahin stand der Geist minutenlang weiter da (Tester).
+        hexService.verstecke(ghost.id)
         _catchEvent.value = CatchEvent(ghost, CatchStatus.PENDING, rx = rxHere)
         merkeOffen(ghost, rxHere)
         scope.launch { confirmViaFeed(ghost, rxHere) }
