@@ -1984,8 +1984,11 @@ class BleManager(private val context: Context) {
             var offset = 101
             if (hasLatLon && payload.size >= offset + 8) {
                 val buffer = ByteBuffer.wrap(payload, offset, 8).order(ByteOrder.LITTLE_ENDIAN)
-                lat = buffer.int / 1e7
-                lon = buffer.int / 1e7
+                // MeshCore-Adverts kodieren lat/lon als int32 * 1e6 (wie in parseContact unten).
+                // Bis 2026-08-21 stand hier 1e7 -> alle von Android gemeldeten Repeater lagen um
+                // Faktor 10 verschoben im Golf von Guinea (44 % der Advert-Positionen auf mapme.sh).
+                lat = buffer.int / 1e6
+                lon = buffer.int / 1e6
                 offset += 8
                 Log.d(TAG, "  lat/lon: $lat, $lon")
             }
